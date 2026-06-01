@@ -1,8 +1,5 @@
-__pycache__/
-*.pyc
+# Project-specific
 .venv/
-
-# test/dev artifacts
 nhk*.html
 nhk*.htm
 nhk_files/
@@ -10,4 +7,46 @@ nhk2_files/
 nhk3_files/
 run_ext*.py
 screenshot*.png
+
+# Python
+__pycache__/
+*.py[codz]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+*.cover
+.hypothesis/
 .pytest_cache/
+.pybuilder/
+target/
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+__pypackages__/
+.env
+.envrc
+env/
+venv/
+ENV/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+.ruff_cache/
+.pypirc
