@@ -13,6 +13,15 @@
     "service_worker": "background.js",
     "scripts": ["background.js"]
   },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "ankikan@cameronchambers93",
+      "data_collection_permissions": {
+        "required": [],
+        "optional": []
+      }
+    }
+  },
   "content_scripts": [
     {
       "matches": ["*://*/*", "file:///*"],
