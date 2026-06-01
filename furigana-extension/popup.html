@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <span class="logo">あ</span>
+    <h1>Anki Furigana</h1>
+  </header>
+
+  <section>
+    <label for="fieldName">Anki field name</label>
+    <input id="fieldName" type="text" placeholder="Expression" spellcheck="false">
+  </section>
+
+  <section>
+    <label for="allowedUrls">Allowed URLs <span class="hint">(one hostname per line; empty = all pages)</span></label>
+    <textarea id="allowedUrls" rows="3" placeholder="nhk.or.jp&#10;example.com" spellcheck="false"></textarea>
+  </section>
+
+  <section>
+    <label for="blockedUrls">Blocked URLs <span class="hint">(one hostname per line; always skipped)</span></label>
+    <textarea id="blockedUrls" rows="3" placeholder="twitter.com&#10;reddit.com" spellcheck="false"></textarea>
+  </section>
+
+  <section>
+    <div class="row">
+      <label class="toggle-label">
+        <input id="furiganaGlobal" type="checkbox">
+        Show furigana
+      </label>
+    </div>
+    <div id="furiganaPerStatus" class="per-status">
+      <label>
+        <input id="furiganaUnlearned" type="checkbox">
+        <span class="dot unlearned"></span> Unlearned
+      </label>
+      <label>
+        <input id="furiganaLearning" type="checkbox">
+        <span class="dot learning"></span> Learning
+      </label>
+      <label>
+        <input id="furiganaLearned" type="checkbox">
+        <span class="dot learned"></span> Learned
+      </label>
+    </div>
+  </section>
+
+  <div class="legend">
+    <span class="swatch unlearned"></span>Unlearned
+    <span class="swatch learning"></span>Learning
+    <span class="swatch learned"></span>Learned
+    <span class="dup-mark">✦</span>Duplicate
+  </div>
+
+  <div class="actions">
+    <button id="scanBtn">Scan page</button>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
