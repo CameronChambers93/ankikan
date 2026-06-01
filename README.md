@@ -17,14 +17,21 @@ AnkiKan is a browser extension that reads the furigana already present on a page
 ### Prerequisites
 
 - [Anki](https://apps.ankiweb.net/) with the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on installed (code `2055492159`)
-- Chrome or a Chromium-based browser
+- Chrome/Chromium or Firefox
 
-### Load the extension
+### Chrome / Chromium
 
 1. Open `chrome://extensions`
 2. Enable **Developer mode** (top right)
 3. Click **Load unpacked** and select the `furigana-extension` folder
 4. To use on local files, find the extension in the list and enable **Allow access to file URLs**
+
+### Firefox
+
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click **Load Temporary Add-on** and select any file inside the `furigana-extension` folder
+
+> **Note:** Temporary add-ons are removed when Firefox closes. For a persistent install, sign the extension via [Mozilla Add-on Hub](https://addons.mozilla.org/developers/) or use Firefox Developer Edition with `xpinstall.signatures.required` set to `false` in `about:config`.
 
 Anki must be running whenever you want the extension to scan a page.
 
