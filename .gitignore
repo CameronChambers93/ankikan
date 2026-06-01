@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+
+# test/dev artifacts
+nhk*.html
+nhk*.htm
+nhk_files/
+nhk2_files/
+nhk3_files/
+run_ext*.py
+screenshot*.png
+.pytest_cache/
