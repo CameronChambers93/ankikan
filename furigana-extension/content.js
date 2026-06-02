@@ -1,6 +1,10 @@
 'use strict';
 
-const ext = typeof browser !== 'undefined' ? browser : chrome;
+const ext = typeof browser !== 'undefined' ? browser : (typeof chrome !== 'undefined' ? chrome : null);
+
+function isJapanese(word) {
+  return /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(word);
+}
 
 const STATUS_CLASSES = ['anki-unlearned', 'anki-learning', 'anki-learned'];
 const ALL_CLASSES = [...STATUS_CLASSES, 'anki-duplicate', 'anki-hide-furigana'];
@@ -13,22 +17,20 @@ const DEFAULTS = {
   furiganaUnlearned: true,
   furiganaLearning: true,
   furiganaLearned: false,
+  useLemma: false,
 };
 
 function isAllowed(settings) {
   const host = location.hostname;
   const isFile = location.protocol === 'file:';
 
-  // Blacklist takes priority over everything
   const blocked = settings.blockedUrls || [];
   if (blocked.some((u) => { const t = u.trim(); return t && host.includes(t); })) {
     return false;
   }
 
-  // file:// URLs bypass the allowlist — always run on local files
   if (isFile) return true;
 
-  // Empty allowlist = all pages; non-empty = must match
   if (!settings.allowedUrls || settings.allowedUrls.length === 0) return true;
   return settings.allowedUrls.some((u) => { const t = u.trim(); return t && host.includes(t); });
 }
@@ -49,14 +51,10 @@ function extractWord(span) {
   return word.trim();
 }
 
-function hasKanji(str) {
-  return /[一-鿿㐀-䶿豈-﫿]/.test(str);
-}
-
 function cardTypeToStatus(type) {
   if (type === 0) return 'anki-unlearned';
   if (type === 2) return 'anki-learned';
-  return 'anki-learning'; // type 1 (learning) and 3 (relearning)
+  return 'anki-learning';
 }
 
 function applyFurigana(span, statusClass, settings) {
@@ -76,32 +74,70 @@ async function ankiRequest(body) {
   return ext.runtime.sendMessage({ action: 'ankiQuery', body });
 }
 
+// Fetch lemmas from the local lemma server using sentence context for accuracy.
+// Groups ruby spans by their nearest block ancestor so the tokenizer sees full
+// sentence context rather than isolated fragments (which can be mis-classified).
+async function fetchLemmas(candidates) {
+  const blocks = new Map();
+  for (const { span, word } of candidates) {
+    const block = span.closest('p, li, td, th, dd, dt, blockquote') || span.parentElement;
+    if (!blocks.has(block)) blocks.set(block, new Set());
+    blocks.get(block).add(word);
+  }
+
+  const paragraphs = [];
+  for (const [block, surfaceSet] of blocks) {
+    const allSpans = Array.from(block.querySelectorAll('span'));
+    const text = allSpans.map(extractWord).join('');
+    if (text) {
+      paragraphs.push({ text, surfaces: [...surfaceSet] });
+    }
+  }
+
+  if (paragraphs.length === 0) return {};
+
+  return ext.runtime.sendMessage({ action: 'lemmaQuery', body: { paragraphs } });
+}
+
 async function scanPage(settings) {
-  // Clear previous annotations
   document.querySelectorAll(STATUS_CLASSES.map((c) => '.' + c).join(','))
     .forEach((el) => el.classList.remove(...ALL_CLASSES));
 
-  // Collect spans that contain ruby elements
   const allSpans = Array.from(document.querySelectorAll('span'));
   const candidates = allSpans
-    .filter((s) => s.querySelector('ruby'))
     .map((span) => ({ span, word: extractWord(span) }))
-    .filter(({ word }) => hasKanji(word));
+    .filter(({ word }) => isJapanese(word));
 
   if (candidates.length === 0) {
     return { found: 0, matched: 0 };
   }
 
-  const uniqueWords = [...new Set(candidates.map((c) => c.word))];
+  // Build lemma map: surface → dictionary form.
+  // Priority: lemma server (live, context-aware) > data-lemma attribute (pre-annotated HTML).
+  const lemmaMap = {};
+  for (const { span, word } of candidates) {
+    if (span.dataset.lemma) lemmaMap[word] = span.dataset.lemma;
+  }
+  if (settings.useLemma) {
+    try {
+      const serverLemmas = await fetchLemmas(candidates);
+      Object.assign(lemmaMap, serverLemmas);
+    } catch {
+      // Server not running; fall back to data-lemma / surface form.
+    }
+  }
 
-  // Round trip 1: findCards for all unique words in one multi call
+  const lookupWord = (word) => lemmaMap[word] || word;
+  const uniqueLookupWords = [...new Set(candidates.map(({ word }) => lookupWord(word)))];
+
+  // Round trip 1: findCards for all unique lookup words
   const multiBody = {
     action: 'multi',
     version: 6,
     params: {
-      actions: uniqueWords.map((word) => ({
+      actions: uniqueLookupWords.map((lw) => ({
         action: 'findCards',
-        params: { query: `${settings.fieldName}:"${word}"` },
+        params: { query: `${settings.fieldName}:"${lw}"` },
       })),
     },
   };
@@ -117,13 +153,10 @@ async function scanPage(settings) {
     return { found: candidates.length, matched: 0, error: multiResponse.error || 'unknown' };
   }
 
-  // multiResponse.result[i] is the raw card ID array for uniqueWords[i]
-  // (sub-actions without version return raw values)
   const wordToCardIds = {};
-  uniqueWords.forEach((word, i) => {
+  uniqueLookupWords.forEach((lw, i) => {
     const raw = multiResponse.result[i];
-    // Handle both raw array and wrapped {result, error} (version-aware sub-actions)
-    wordToCardIds[word] = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.result) ? raw.result : []);
+    wordToCardIds[lw] = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.result) ? raw.result : []);
   });
 
   const allCardIds = [...new Set(Object.values(wordToCardIds).flat())];
@@ -151,10 +184,9 @@ async function scanPage(settings) {
     }
   }
 
-  // Annotate spans
   let matched = 0;
   for (const { span, word } of candidates) {
-    const cardIds = wordToCardIds[word];
+    const cardIds = wordToCardIds[lookupWord(word)];
     if (!cardIds || cardIds.length === 0) continue;
 
     const statusClass = cardTypeToStatus(cardIdToType[cardIds[0]] ?? 0);
@@ -167,25 +199,26 @@ async function scanPage(settings) {
   return { found: candidates.length, matched };
 }
 
-// Message listener — popup triggers rescan or settings-only furigana refresh
-ext.runtime.onMessage.addListener((msg) => {
-  if (msg.action === 'scan') {
-    return ext.storage.local.get(DEFAULTS).then((settings) => scanPage(settings));
-  }
-  if (msg.action === 'refreshFurigana') {
-    const settings = msg.settings;
-    document.querySelectorAll(STATUS_CLASSES.map((c) => '.' + c).join(','))
-      .forEach((span) => {
-        span.classList.remove('anki-hide-furigana');
-        const status = STATUS_CLASSES.find((c) => span.classList.contains(c));
-        if (status) applyFurigana(span, status, settings);
-      });
-    return Promise.resolve({ ok: true });
-  }
-});
+if (typeof chrome !== 'undefined' || typeof browser !== 'undefined') {
+  ext.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'scan') {
+      return ext.storage.local.get(DEFAULTS).then((settings) => scanPage(settings));
+    }
+    if (msg.action === 'refreshFurigana') {
+      const settings = msg.settings;
+      document.querySelectorAll(STATUS_CLASSES.map((c) => '.' + c).join(','))
+        .forEach((span) => {
+          span.classList.remove('anki-hide-furigana');
+          const status = STATUS_CLASSES.find((c) => span.classList.contains(c));
+          if (status) applyFurigana(span, status, settings);
+        });
+      return Promise.resolve({ ok: true });
+    }
+  });
 
-// Auto-scan on load
-ext.storage.local.get(DEFAULTS).then((settings) => {
-  if (!isAllowed(settings)) return;
-  scanPage(settings);
-});
+  ext.storage.local.get(DEFAULTS).then((settings) => {
+    if (!isAllowed(settings)) return;
+    scanPage(settings);
+  });
+}
+
