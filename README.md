@@ -10,7 +10,7 @@ AnkiKan is a browser extension that reads the furigana already present on a page
 - Shows or hides furigana per card status
 - Works on any website and on local HTML files (`file://`)
 - Allowlist and blocklist for fine-grained site control
-- No external servers — everything runs locally
+- Optional **dictionary-form lookup** via a local lemma server — maps conjugated verb stems (e.g. 伝え) to their Anki card form (伝える)
 
 ## Installation
 
@@ -57,6 +57,20 @@ Press **Scan page** to annotate the current page. The status bar shows how many 
 | Amber | Learning (in progress) |
 | Green | Learned (mature card) |
 | ✦ | Duplicate — multiple cards matched this word |
+
+## Lemma server (optional)
+
+The **Use dictionary forms** popup toggle enables context-aware conjugation matching. It requires the local lemma server to be running:
+
+```bash
+# Windows
+$env:PYTHONUTF8=1; .venv\Scripts\python lemma_server.py
+
+# macOS/Linux
+PYTHONUTF8=1 .venv/bin/python lemma_server.py
+```
+
+The server listens on `http://127.0.0.1:7654`. If it is not running the extension falls back to surface-form matching silently. See [LEMMA_SERVER.md](LEMMA_SERVER.md) for the full API reference and options.
 
 ## Tokenizer (Python)
 
