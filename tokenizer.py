@@ -1,6 +1,9 @@
 from __future__ import annotations
+import logging
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+
+_log = logging.getLogger("lemma.tokenizer")
 
 
 def _clean(val: str | None) -> str | None:
@@ -80,6 +83,7 @@ class FugashiTokenizer:
                 lemma_reading=_clean(getattr(f, "lForm", None)),
                 etymology=_clean(getattr(f, "goshu", None)),
             ))
+        _log.debug("fugashi: %d tokens from %d-char input", len(tokens), len(text))
         return tokens
 
 
@@ -111,6 +115,7 @@ class SudachiTokenizer:
                 normalized_form=m.normalized_form(),
                 reading_form=m.reading_form(),
             ))
+        _log.debug("sudachi: %d tokens from %d-char input", len(tokens), len(text))
         return tokens
 
 

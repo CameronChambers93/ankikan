@@ -10,6 +10,7 @@ const DEFAULTS = {
   furiganaUnlearned: true,
   furiganaLearning: true,
   furiganaLearned: false,
+  useLemma: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -23,6 +24,7 @@ async function loadSettings() {
   $('furiganaUnlearned').checked = s.furiganaUnlearned;
   $('furiganaLearning').checked = s.furiganaLearning;
   $('furiganaLearned').checked = s.furiganaLearned;
+  $('useLemma').checked = s.useLemma;
   updatePerStatusState(s.furiganaGlobal);
 }
 
@@ -35,6 +37,7 @@ function currentSettings() {
     furiganaUnlearned: $('furiganaUnlearned').checked,
     furiganaLearning: $('furiganaLearning').checked,
     furiganaLearned: $('furiganaLearned').checked,
+    useLemma: $('useLemma').checked,
   };
 }
 
@@ -80,10 +83,11 @@ $('furiganaUnlearned').addEventListener('change', onFuriganaChange);
 $('furiganaLearning').addEventListener('change', onFuriganaChange);
 $('furiganaLearned').addEventListener('change', onFuriganaChange);
 
-// Field/URL changes just save; scan button applies them
+// Field/URL/lemma changes just save; scan button applies them
 $('fieldName').addEventListener('change', saveSettings);
 $('allowedUrls').addEventListener('change', saveSettings);
 $('blockedUrls').addEventListener('change', saveSettings);
+$('useLemma').addEventListener('change', saveSettings);
 
 $('scanBtn').addEventListener('click', async () => {
   await saveSettings();

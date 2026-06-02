@@ -76,6 +76,11 @@ textarea:focus {
   margin-bottom: 6px;
 }
 
+.lemma-row {
+  margin-top: 7px;
+  margin-bottom: 0;
+}
+
 .toggle-label {
   display: flex;
   align-items: center;
