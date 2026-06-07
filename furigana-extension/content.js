@@ -1,7 +1,8 @@
-import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet } from './style-util.js';
+import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet, injectStyles, resolveStyleSettings } from './style-util.js';
 
 const ext = typeof browser !== 'undefined' ? browser : (typeof chrome !== 'undefined' ? chrome : null);
 
+/** Returns true if `word` contains at least one Han, Hiragana, or Katakana character. */
 function isJapanese(word) {
   return /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(word);
 }
@@ -20,6 +21,13 @@ const DEFAULTS = {
   useLemma: false,
 };
 
+/**
+ * Returns true if the current page should be scanned based on the allow/block URL lists.
+ * Block list is checked first; an empty allow list means all non-blocked pages are allowed.
+ * `file:` protocol pages are always allowed once the block check passes.
+ *
+ * @param {object} settings - Extension settings containing `allowedUrls` and `blockedUrls` arrays.
+ */
 function isAllowed(settings) {
   const host = location.hostname;
   const isFile = location.protocol === 'file:';
@@ -35,6 +43,13 @@ function isAllowed(settings) {
   return settings.allowedUrls.some((u) => { const t = u.trim(); return t && host.includes(t); });
 }
 
+/**
+ * Extracts the visible Japanese text from a `<span>`, ignoring `<rt>` and `<rp>` ruby
+ * annotation nodes so that furigana readings don't contaminate the lookup word.
+ *
+ * @param {HTMLSpanElement} span - A span that may contain plain text nodes and/or `<ruby>` elements.
+ * @returns {string} The trimmed base text without furigana readings.
+ */
 function extractWord(span) {
   let word = '';
   for (const node of span.childNodes) {
@@ -51,12 +66,27 @@ function extractWord(span) {
   return word.trim();
 }
 
+/**
+ * Maps an Anki card `type` integer to its corresponding CSS status class name.
+ * Type 0 = new/unlearned, type 2 = review/learned, all other values = learning.
+ *
+ * @param {number} type - Anki card type value from the `cardsInfo` API response.
+ * @returns {'anki-unlearned'|'anki-learning'|'anki-learned'} CSS class name.
+ */
 function cardTypeToStatus(type) {
   if (type === 0) return 'anki-unlearned';
   if (type === 2) return 'anki-learned';
   return 'anki-learning';
 }
 
+/**
+ * Adds or removes the `anki-hide-furigana` class on a span based on per-status furigana settings.
+ * If `furiganaGlobal` is false, furigana is always hidden regardless of status.
+ *
+ * @param {HTMLSpanElement} span - The span whose furigana visibility to update.
+ * @param {'anki-unlearned'|'anki-learning'|'anki-learned'} statusClass - The span's current Anki status.
+ * @param {object} settings - Extension settings containing furigana visibility flags.
+ */
 function applyFurigana(span, statusClass, settings) {
   if (!settings.furiganaGlobal) {
     span.classList.add('anki-hide-furigana');
@@ -70,13 +100,26 @@ function applyFurigana(span, statusClass, settings) {
   span.classList.toggle('anki-hide-furigana', !show);
 }
 
+/**
+ * Sends an AnkiConnect JSON-RPC request through the background service worker.
+ * Returns the parsed response object from AnkiConnect.
+ *
+ * @param {object} body - A valid AnkiConnect request body (must include `action` and `version`).
+ */
 async function ankiRequest(body) {
   return ext.runtime.sendMessage({ action: 'ankiQuery', body });
 }
 
-// Fetch lemmas from the local lemma server using sentence context for accuracy.
-// Groups ruby spans by their nearest block ancestor so the tokenizer sees full
-// sentence context rather than isolated fragments (which can be mis-classified).
+/**
+ * Queries the local lemma server for dictionary (base) forms of surface words.
+ * Groups spans by their nearest block ancestor (`p`, `li`, `td`, etc.) so the tokenizer
+ * receives full sentence context rather than isolated word fragments, which improves
+ * accuracy for inflected verbs and adjectives.
+ *
+ * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
+ * @returns {Promise<Object.<string, string>>} Map of `{surface: lemma}` for words whose
+ *   dictionary form differs from their surface form.
+ */
 async function fetchLemmas(candidates) {
   const blocks = new Map();
   for (const { span, word } of candidates) {
@@ -99,6 +142,17 @@ async function fetchLemmas(candidates) {
   return ext.runtime.sendMessage({ action: 'lemmaQuery', body: { paragraphs } });
 }
 
+/**
+ * Main scan routine: clears existing highlights, finds all Japanese `<span>` elements,
+ * optionally resolves surface forms to lemmas, then queries AnkiConnect in two round trips
+ * (findCards → cardsInfo) to classify each word and apply the appropriate status class.
+ *
+ * Round trip 1: `multi/findCards` — resolves each unique lookup word to a list of card IDs.
+ * Round trip 2: `cardsInfo` — fetches the card type (new/learning/review) for all found cards.
+ *
+ * @param {object} settings - Extension settings (fieldName, useLemma, furigana flags, etc.).
+ * @returns {Promise<{found: number, matched: number, error?: string}>} Scan result counts.
+ */
 async function scanPage(settings) {
   document.querySelectorAll(STATUS_CLASSES.map((c) => '.' + c).join(','))
     .forEach((el) => el.classList.remove(...ALL_CLASSES));
@@ -214,10 +268,15 @@ if (typeof chrome !== 'undefined' || typeof browser !== 'undefined') {
         });
       return Promise.resolve({ ok: true });
     }
+    if (msg.action === 'refreshStyles') {
+      injectStyles(document, msg.styleSettings);
+      return Promise.resolve({ ok: true });
+    }
   });
 
   ext.storage.local.get(DEFAULTS).then((settings) => {
     if (!isAllowed(settings)) return;
+    injectStyles(document, resolveStyleSettings(settings.styleSettings ?? null));
     scanPage(settings);
   });
 }
