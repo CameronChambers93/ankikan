@@ -1,7 +1,20 @@
 'use strict';
 
+/** Cross-browser API shim — resolves to `browser` (Firefox) or `chrome` (Chromium). */
 const ext = typeof browser !== 'undefined' ? browser : chrome;
 
+/**
+ * Routes messages from content scripts and the popup to the appropriate local HTTP service.
+ *
+ * Handled actions:
+ *   - `ankiQuery`: proxies the request body to AnkiConnect on port 8765 and returns the
+ *     parsed JSON response, or `{result: null, error: '...'}` if the server is unreachable.
+ *   - `lemmaQuery`: proxies the request body to the lemma server on port 7654 and returns
+ *     the parsed JSON response, or `{}` on failure.
+ *
+ * The service worker acts as a proxy because content scripts cannot reach localhost services
+ * directly due to CORS restrictions in some browser configurations.
+ */
 ext.runtime.onMessage.addListener((msg) => {
   if (msg.action === 'ankiQuery') {
     return fetch('http://127.0.0.1:8765', {
