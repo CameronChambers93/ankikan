@@ -1,5 +1,3 @@
-'use strict';
-
 const ext = typeof browser !== 'undefined' ? browser : chrome;
 
 const DEFAULTS = {
@@ -13,8 +11,13 @@ const DEFAULTS = {
   useLemma: false,
 };
 
+/** Shorthand for `document.getElementById`. */
 const $ = (id) => document.getElementById(id);
 
+/**
+ * Loads saved settings from extension storage and populates all popup form fields.
+ * Falls back to `DEFAULTS` for any key not yet persisted.
+ */
 async function loadSettings() {
   const s = await ext.storage.local.get(DEFAULTS);
   $('fieldName').value = s.fieldName;
@@ -28,6 +31,13 @@ async function loadSettings() {
   updatePerStatusState(s.furiganaGlobal);
 }
 
+/**
+ * Reads the current form state and returns a normalized settings object.
+ * Trims whitespace, splits textarea lines into arrays, and falls back to `'Expression'`
+ * if the field name input is empty.
+ *
+ * @returns {object} Settings object ready to be passed to `ext.storage.local.set`.
+ */
 function currentSettings() {
   return {
     fieldName: $('fieldName').value.trim() || 'Expression',
@@ -41,25 +51,52 @@ function currentSettings() {
   };
 }
 
+/** Persists the current form state to `ext.storage.local`. */
 async function saveSettings() {
   await ext.storage.local.set(currentSettings());
 }
 
+/**
+ * Enables or disables the per-status furigana checkboxes based on the global furigana toggle.
+ * When disabled, the controls are visually greyed out via the `disabled` CSS class.
+ *
+ * @param {boolean} enabled - Whether the global furigana toggle is checked.
+ */
 function updatePerStatusState(enabled) {
   $('furiganaPerStatus').classList.toggle('disabled', !enabled);
 }
 
+/**
+ * Displays a status message in the popup footer bar.
+ *
+ * @param {string} msg - Message text to display.
+ * @param {string} [type=''] - Optional CSS modifier class (e.g. `'ok'` or `'error'`).
+ */
 function setStatus(msg, type = '') {
   const el = $('status');
   el.textContent = msg;
   el.className = 'status ' + type;
 }
 
+/**
+ * Returns the currently active tab in the current browser window.
+ *
+ * @returns {Promise<chrome.tabs.Tab>} The active tab object.
+ */
 async function getActiveTab() {
   const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
   return tab;
 }
 
+/**
+ * Sends a message to the content script running in the given tab.
+ * Returns `null` if the content script is not injected on that page
+ * (e.g. `about:`, `chrome:`, or `moz-extension:` URLs).
+ *
+ * @param {chrome.tabs.Tab} tab - The target tab.
+ * @param {object} msg - Message object to send.
+ * @returns {Promise<any|null>} The content script's response, or null on failure.
+ */
 async function sendToContentScript(tab, msg) {
   try {
     return await ext.tabs.sendMessage(tab.id, msg);
@@ -69,7 +106,12 @@ async function sendToContentScript(tab, msg) {
   }
 }
 
-// Furigana toggles update live without requiring a full rescan
+/**
+ * Handles changes to any furigana visibility checkbox.
+ * Saves the updated settings, refreshes the per-status control state, then sends
+ * a `refreshFurigana` message to the active tab so the page updates immediately
+ * without requiring a full rescan.
+ */
 async function onFuriganaChange() {
   await saveSettings();
   const settings = currentSettings();
@@ -82,6 +124,8 @@ $('furiganaGlobal').addEventListener('change', onFuriganaChange);
 $('furiganaUnlearned').addEventListener('change', onFuriganaChange);
 $('furiganaLearning').addEventListener('change', onFuriganaChange);
 $('furiganaLearned').addEventListener('change', onFuriganaChange);
+
+$('openOptionsBtn').addEventListener('click', () => ext.runtime.openOptionsPage());
 
 // Field/URL/lemma changes just save; scan button applies them
 $('fieldName').addEventListener('change', saveSettings);
