@@ -175,7 +175,8 @@ describe('resolveStyleSettings (AC11)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// AC1 — popup HTML has a Style section with the expected inputs
+// AC1 (issue #6) — options.html has the Style section with the expected inputs
+// Previously this block read popup.html; after extraction it reads options.html.
 // ---------------------------------------------------------------------------
 
 describe('popup HTML style section (AC1)', () => {
@@ -184,30 +185,118 @@ describe('popup HTML style section (AC1)', () => {
   beforeEach(async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'popup.html');
+    // After extraction the style section lives in options.html, not popup.html.
+    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'options.html');
     const html = fs.readFileSync(htmlPath, 'utf8');
-    doc = new JSDOM(html).window.document;
+    doc = new JSDOM(html, { url: 'http://localhost/' }).window.document;
   });
 
   it('contains a section or element with a "Style" heading', () => {
     expect(doc.body.textContent.toLowerCase()).toContain('style');
   });
 
-  it('contains a colour input for the global default background colour', () => {
-    expect(doc.querySelectorAll('input[type="color"]').length).toBeGreaterThan(0);
+  it('contains a colour input for the global default background colour (#global-bg-color)', () => {
+    expect(doc.getElementById('global-bg-color')).not.toBeNull();
+    expect(doc.getElementById('global-bg-color').type).toBe('color');
   });
 
-  it('contains an opacity control for the global default background', () => {
-    expect(doc.querySelectorAll('input[type="range"], input[type="number"]').length).toBeGreaterThan(0);
+  it('contains #global-bg-opacity, #global-border-radius, #global-outline-color, #global-outline-opacity, #global-outline-width', () => {
+    expect(doc.getElementById('global-bg-opacity')).not.toBeNull();
+    expect(doc.getElementById('global-border-radius')).not.toBeNull();
+    expect(doc.getElementById('global-outline-color')).not.toBeNull();
+    expect(doc.getElementById('global-outline-opacity')).not.toBeNull();
+    expect(doc.getElementById('global-outline-width')).not.toBeNull();
   });
 
-  it('contains per-category colour controls for all three categories (at least 4 colour inputs total)', () => {
+  it('contains per-category enable checkboxes for all three categories', () => {
+    for (const cat of ['unlearned', 'learning', 'learned']) {
+      const el = doc.getElementById(`${cat}-bg-color-enabled`);
+      expect(el, `${cat}-bg-color-enabled should exist in options.html`).not.toBeNull();
+      expect(el.type).toBe('checkbox');
+    }
+  });
+
+  it('contains per-category colour and opacity inputs for all three categories', () => {
+    for (const cat of ['unlearned', 'learning', 'learned']) {
+      expect(doc.getElementById(`${cat}-bg-color`), `${cat}-bg-color`).not.toBeNull();
+      expect(doc.getElementById(`${cat}-bg-opacity`), `${cat}-bg-opacity`).not.toBeNull();
+    }
+  });
+
+  it('contains at least four colour inputs (global + three per-category)', () => {
     expect(doc.querySelectorAll('input[type="color"]').length).toBeGreaterThanOrEqual(4);
   });
 
-  it('contains a "Reset to defaults" button', () => {
-    const resetBtn = Array.from(doc.querySelectorAll('button')).find((b) => /reset/i.test(b.textContent));
-    expect(resetBtn).not.toBeUndefined();
+  it('contains a #resetStylesBtn button', () => {
+    expect(doc.getElementById('resetStylesBtn')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #6 — popup.html after extraction: no style inputs, gains #openOptionsBtn
+// ---------------------------------------------------------------------------
+
+describe('popup HTML after extraction (issue #6)', () => {
+  let doc;
+
+  beforeEach(async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'popup.html');
+    const html = fs.readFileSync(htmlPath, 'utf8');
+    // Pass a URL so JSDOM does not treat the document as an opaque origin,
+    // which would cause localStorage errors when the module script tag is parsed.
+    doc = new JSDOM(html, { url: 'http://localhost/' }).window.document;
+  });
+
+  it('has zero input[type="color"] elements after the style section is moved to options.html', () => {
+    // All colour pickers belong in options.html; popup.html must be lean.
+    expect(doc.querySelectorAll('input[type="color"]').length).toBe(0);
+  });
+
+  it('has no #resetStylesBtn after extraction', () => {
+    // The reset button is now in options.html; popup.html must not contain it.
+    expect(doc.getElementById('resetStylesBtn')).toBeNull();
+  });
+
+  it('retains #scanBtn so the primary action is still accessible from the popup', () => {
+    // Scan is a popup action, not a settings action, so it stays in popup.html.
+    expect(doc.getElementById('scanBtn')).not.toBeNull();
+  });
+
+  it('has an #openOptionsBtn to open the dedicated options page', () => {
+    // The popup must offer a way to reach the extracted options page.
+    expect(doc.getElementById('openOptionsBtn')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #6 — manifest.json must declare options_ui pointing to options.html
+// ---------------------------------------------------------------------------
+
+describe('manifest.json options_ui (issue #6)', () => {
+  let manifest;
+
+  beforeEach(async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const manifestPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'manifest.json');
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  });
+
+  it('has an options_ui field', () => {
+    // Without options_ui the browser will not know where to open the settings page.
+    expect(manifest).toHaveProperty('options_ui');
+  });
+
+  it('options_ui.page is "options.html"', () => {
+    // The page must point to the correct file name.
+    expect(manifest.options_ui.page).toBe('options.html');
+  });
+
+  it('options_ui.open_in_tab is true', () => {
+    // open_in_tab: true gives the options page enough vertical space for all controls.
+    expect(manifest.options_ui.open_in_tab).toBe(true);
   });
 });
 

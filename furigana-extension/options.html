@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Highlight Style Settings</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <span class="logo">あ</span>
+    <h1>Highlight Style Settings</h1>
+  </header>
+
+  <section>
+    <h2>Highlight Style</h2>
+    <div>
+      <label>Default background colour <input type="color" id="global-bg-color"></label>
+      <label>Default background opacity <input type="number" id="global-bg-opacity" step="0.01" min="0" max="1"></label>
+      <label>Border radius <input type="number" id="global-border-radius" step="1" min="0"></label>
+      <label>Default outline colour <input type="color" id="global-outline-color"></label>
+      <label>Default outline opacity <input type="number" id="global-outline-opacity" step="0.01" min="0" max="1"></label>
+      <label>Default outline width <input type="number" id="global-outline-width" step="1" min="0"></label>
+    </div>
+    <div>
+      <label><input type="checkbox" id="unlearned-bg-color-enabled"> Unlearned background colour <input type="color" id="unlearned-bg-color" disabled></label>
+      <label>Unlearned background opacity <input type="number" id="unlearned-bg-opacity" step="0.01" min="0" max="1"></label>
+    </div>
+    <div>
+      <label><input type="checkbox" id="learning-bg-color-enabled"> Learning background colour <input type="color" id="learning-bg-color" disabled></label>
+      <label>Learning background opacity <input type="number" id="learning-bg-opacity" step="0.01" min="0" max="1"></label>
+    </div>
+    <div>
+      <label><input type="checkbox" id="learned-bg-color-enabled"> Learned background colour <input type="color" id="learned-bg-color" disabled></label>
+      <label>Learned background opacity <input type="number" id="learned-bg-opacity" step="0.01" min="0" max="1"></label>
+    </div>
+    <button id="resetStylesBtn">Reset to defaults</button>
+  </section>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

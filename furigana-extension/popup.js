@@ -1,6 +1,3 @@
-import { STYLE_DEFAULTS, resolveStyleSettings } from './style-util.js';
-import { resetToDefaults } from './popup-style.js';
-
 const ext = typeof browser !== 'undefined' ? browser : chrome;
 
 const DEFAULTS = {
@@ -22,7 +19,7 @@ const $ = (id) => document.getElementById(id);
  * Falls back to `DEFAULTS` for any key not yet persisted.
  */
 async function loadSettings() {
-  const s = await ext.storage.local.get({ ...DEFAULTS, styleSettings: STYLE_DEFAULTS.styleSettings });
+  const s = await ext.storage.local.get(DEFAULTS);
   $('fieldName').value = s.fieldName;
   $('allowedUrls').value = (s.allowedUrls || []).join('\n');
   $('blockedUrls').value = (s.blockedUrls || []).join('\n');
@@ -32,22 +29,6 @@ async function loadSettings() {
   $('furiganaLearned').checked = s.furiganaLearned;
   $('useLemma').checked = s.useLemma;
   updatePerStatusState(s.furiganaGlobal);
-
-  const styleSettings = resolveStyleSettings(s.styleSettings);
-  $('global-bg-color').value = styleSettings.default.backgroundColor;
-  $('global-bg-opacity').value = styleSettings.default.backgroundOpacity;
-  $('global-border-radius').value = styleSettings.default.borderRadius;
-  $('global-outline-color').value = styleSettings.default.outlineColor;
-  $('global-outline-opacity').value = styleSettings.default.outlineOpacity;
-  $('global-outline-width').value = styleSettings.default.outlineWidth;
-  for (const cat of ['unlearned', 'learning', 'learned']) {
-    const overrides = styleSettings[cat] ?? {};
-    const hasColor  = 'backgroundColor' in overrides;
-    $(`${cat}-bg-color-enabled`).checked = hasColor;
-    $(`${cat}-bg-color`).disabled        = !hasColor;
-    $(`${cat}-bg-color`).value           = overrides.backgroundColor ?? '#808080';
-    $(`${cat}-bg-opacity`).value         = overrides.backgroundOpacity ?? '';
-  }
 }
 
 /**
@@ -139,61 +120,12 @@ async function onFuriganaChange() {
   if (tab) await sendToContentScript(tab, { action: 'refreshFurigana', settings });
 }
 
-function currentStyleSettings() {
-  const catOverride = (cat) => {
-    const colorEnabled = $(`${cat}-bg-color-enabled`).checked;
-    const opacityRaw   = $(`${cat}-bg-opacity`).value;
-    return {
-      ...(colorEnabled ? { backgroundColor: $(`${cat}-bg-color`).value } : {}),
-      ...(opacityRaw !== '' ? { backgroundOpacity: Number(opacityRaw) } : {}),
-    };
-  };
-  return {
-    default: {
-      backgroundColor:   $('global-bg-color').value,
-      backgroundOpacity: Number($('global-bg-opacity').value),
-      borderRadius:      Number($('global-border-radius').value),
-      outlineColor:      $('global-outline-color').value,
-      outlineOpacity:    Number($('global-outline-opacity').value),
-      outlineWidth:      Number($('global-outline-width').value),
-    },
-    unlearned: catOverride('unlearned'),
-    learning:  catOverride('learning'),
-    learned:   catOverride('learned'),
-  };
-}
-
-async function onStyleChange() {
-  const styleSettings = currentStyleSettings();
-  await ext.storage.local.set({ styleSettings });
-  const tab = await getActiveTab();
-  if (tab) await sendToContentScript(tab, { action: 'refreshStyles', styleSettings });
-}
-
 $('furiganaGlobal').addEventListener('change', onFuriganaChange);
 $('furiganaUnlearned').addEventListener('change', onFuriganaChange);
 $('furiganaLearning').addEventListener('change', onFuriganaChange);
 $('furiganaLearned').addEventListener('change', onFuriganaChange);
 
-['global-bg-color', 'global-outline-color', 'unlearned-bg-color', 'learning-bg-color', 'learned-bg-color']
-  .forEach((id) => $(id).addEventListener('input', onStyleChange));
-['global-bg-opacity', 'global-border-radius', 'global-outline-opacity', 'global-outline-width',
-  'unlearned-bg-opacity', 'learning-bg-opacity', 'learned-bg-opacity']
-  .forEach((id) => $(id).addEventListener('change', onStyleChange));
-
-for (const cat of ['unlearned', 'learning', 'learned']) {
-  $(`${cat}-bg-color-enabled`).addEventListener('change', (e) => {
-    $(`${cat}-bg-color`).disabled = !e.target.checked;
-    onStyleChange();
-  });
-}
-
-$('resetStylesBtn').addEventListener('click', () => {
-  resetToDefaults(document, (data) => ext.storage.local.set(data), async (msg) => {
-    const tab = await getActiveTab();
-    if (tab) sendToContentScript(tab, msg);
-  });
-});
+$('openOptionsBtn').addEventListener('click', () => ext.runtime.openOptionsPage());
 
 // Field/URL/lemma changes just save; scan button applies them
 $('fieldName').addEventListener('change', saveSettings);
@@ -226,12 +158,6 @@ $('scanBtn').addEventListener('click', async () => {
     return;
   }
   setStatus(`${result.matched} / ${result.found} words matched`, 'ok');
-});
-
-ext.storage.onChanged.addListener((changes) => {
-  if ('styleSettings' in changes && !('newValue' in changes.styleSettings)) {
-    loadSettings();
-  }
 });
 
 loadSettings();

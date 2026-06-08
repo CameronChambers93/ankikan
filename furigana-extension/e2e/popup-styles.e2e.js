@@ -47,12 +47,12 @@ test.afterAll(async () => {
   await browserContext?.close();
 });
 
-/** Opens popup.html as a new page in the shared browser context. */
+/** Opens options.html as a new page in the shared browser context (style controls moved here in issue #6). */
 async function openPopup() {
   const [background] = browserContext.serviceWorkers();
   const extensionId = background.url().split('/')[2];
   const popup = await browserContext.newPage();
-  await popup.goto(`chrome-extension://${extensionId}/popup.html`);
+  await popup.goto(`chrome-extension://${extensionId}/options.html`);
   return popup;
 }
 
