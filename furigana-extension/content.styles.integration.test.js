@@ -460,3 +460,86 @@ describe('resetToDefaults — enable-override checkboxes (issue #4)', () => {
     expect(() => resetToDefaults(window.document, vi.fn(), vi.fn())).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// page-load style initialisation (issue #8)
+// ---------------------------------------------------------------------------
+
+describe('page-load style initialisation (issue #8)', () => {
+  // AC1: a saved category override overrides the built-in colour for that category.
+  // This ensures user preferences are honoured rather than the built-in red being
+  // shown for unlearned words when the user has chosen a different colour.
+  it('resolveStyleSettings with a saved unlearned override produces the override colour in .anki-unlearned, not the built-in red', () => {
+    const stored = {
+      default: {},
+      unlearned: { backgroundColor: '#0000ff' },
+      learning: {},
+      learned: {},
+    };
+    const css = buildStyleSheet(resolveStyleSettings(stored));
+    const unlearnedBlock = css.slice(css.indexOf('.anki-unlearned'), css.indexOf('.anki-learning'));
+    // Override colour #0000ff must appear in the unlearned rule.
+    expect(unlearnedBlock).toMatch(/rgba\(0,\s*0,\s*255/);
+    // Built-in red #dc4646 → rgb(220,70,70) must NOT appear in the unlearned rule.
+    expect(unlearnedBlock).not.toMatch(/rgba\(220,\s*70,\s*70/);
+  });
+
+  // AC2: when storage returns null, resolveStyleSettings falls back to
+  // STYLE_DEFAULTS.styleSettings (the grey global palette), not BUILT_IN_STYLE_FALLBACK.
+  // The grey default (#808080 → 128, 128, 128) overrides the per-category colours
+  // in resolveCategory's merge order, so all three rules use grey.
+  it('resolveStyleSettings(null) produces CSS containing the grey STYLE_DEFAULTS palette', () => {
+    const css = buildStyleSheet(resolveStyleSettings(null));
+    expect(css).toContain('128'); // #808080 → rgba(128, 128, 128, ...)
+    expect(css).toContain('.anki-unlearned');
+    expect(css).toContain('.anki-learning');
+    expect(css).toContain('.anki-learned');
+  });
+
+  // AC2 (no-throw): resolveStyleSettings must not throw when storage is null.
+  it('resolveStyleSettings(null) does not throw', () => {
+    expect(() => resolveStyleSettings(null)).not.toThrow();
+  });
+
+  // AC3: resolveStyleSettings must not throw when storage is undefined.
+  // content.js historically passed undefined when styleSettings was absent from
+  // the DEFAULTS object; the function must handle this gracefully.
+  it('resolveStyleSettings(undefined) does not throw', () => {
+    expect(() => resolveStyleSettings(undefined)).not.toThrow();
+  });
+
+  // AC4: null and undefined both represent "no saved settings"; the resulting CSS
+  // must be identical so page load and first-run produce the same visual output.
+  it('resolveStyleSettings(null) and resolveStyleSettings(undefined) produce identical CSS', () => {
+    const cssNull      = buildStyleSheet(resolveStyleSettings(null));
+    const cssUndefined = buildStyleSheet(resolveStyleSettings(undefined));
+    expect(cssNull).toBe(cssUndefined);
+  });
+
+  // AC5: a saved settings object with only a learned override must leave the
+  // unlearned and learning categories using BUILT_IN_STYLE_FALLBACK colours,
+  // while the learned category uses the saved override.
+  it('saved learned override uses override colour; absent unlearned/learning use BUILT_IN_STYLE_FALLBACK colours', () => {
+    const stored = {
+      default: {},
+      unlearned: {},
+      learning: {},
+      learned: { backgroundColor: '#0000ff' },
+    };
+    const css = buildStyleSheet(resolveStyleSettings(stored));
+
+    // Extract per-category CSS blocks.
+    const unlearnedBlock = css.slice(css.indexOf('.anki-unlearned'), css.indexOf('.anki-learning'));
+    const learningBlock  = css.slice(css.indexOf('.anki-learning'),  css.indexOf('.anki-learned'));
+    const learnedBlock   = css.slice(css.indexOf('.anki-learned'));
+
+    // .anki-unlearned must use BUILT_IN_STYLE_FALLBACK.unlearned: #dc4646 → rgba(220, 70, 70, ...)
+    expect(unlearnedBlock).toMatch(/rgba\(220,\s*70,\s*70/);
+
+    // .anki-learning must use BUILT_IN_STYLE_FALLBACK.learning: #e6aa1e → rgba(230, 170, 30, ...)
+    expect(learningBlock).toMatch(/rgba\(230,\s*170,\s*30/);
+
+    // .anki-learned must use the saved override #0000ff → rgba(0, 0, 255, ...)
+    expect(learnedBlock).toMatch(/rgba\(0,\s*0,\s*255/);
+  });
+});

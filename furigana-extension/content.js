@@ -19,6 +19,7 @@ const DEFAULTS = {
   furiganaLearning: true,
   furiganaLearned: false,
   useLemma: false,
+  styleSettings: null,
 };
 
 /**
