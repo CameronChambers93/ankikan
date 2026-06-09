@@ -59,10 +59,12 @@ export function hexToRgb(hex) {
  * @returns {object} Resolved style properties for the category.
  */
 export function resolveCategory(styleSettings, category) {
+  const catOverride = styleSettings?.[category] ?? {};
+  const hasCatKeys = Object.keys(catOverride).length > 0;
   return {
-    ...BUILT_IN_STYLE_FALLBACK[category],
+    ...(hasCatKeys ? {} : BUILT_IN_STYLE_FALLBACK[category]),
     ...(styleSettings?.default ?? {}),
-    ...(styleSettings?.[category] ?? {}),
+    ...catOverride,
   };
 }
 
@@ -82,8 +84,9 @@ export function resolveCategory(styleSettings, category) {
  */
 export function resolveStyleSettings(stored) {
   if (!stored || typeof stored !== 'object') return STYLE_DEFAULTS.styleSettings;
+  const hasDefaultKeys = stored.default && Object.keys(stored.default).length > 0;
   return {
-    default: { ...STYLE_DEFAULTS.styleSettings.default, ...(stored.default ?? {}) },
+    default: hasDefaultKeys ? { ...STYLE_DEFAULTS.styleSettings.default, ...(stored.default ?? {}) } : {},
     unlearned: { ...(stored.unlearned ?? {}) },
     learning: { ...(stored.learning ?? {}) },
     learned: { ...(stored.learned ?? {}) },
