@@ -4,7 +4,8 @@
   "description": "AnkiKan browser extension",
   "type": "module",
   "scripts": {
-    "build": "esbuild content.js --bundle --outfile=dist/content.js --format=iife --platform=browser",
+    "build": "node build.js",
+    "dev": "web-ext run --source-dir .",
     "test": "vitest run",
     "test:e2e": "playwright test --config=playwright.config.js"
   },
@@ -12,7 +13,14 @@
     "@playwright/test": "^1.60.0",
     "@vitest/coverage-v8": "^2.0.0",
     "esbuild": "^0.28.0",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^25.0.0",
-    "vitest": "^2.0.0"
+    "kuromoji": "^0.1.2",
+    "vitest": "^2.0.0",
+    "web-ext": "^8.10.0"
+  },
+  "dependencies": {
+    "@zip.js/zip.js": "^2.8.26",
+    "dexie": "^4.4.3"
   }
 }
