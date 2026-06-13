@@ -1,4 +1,7 @@
 import { STYLE_DEFAULTS, resolveStyleSettings } from './style-util.js';
+import { ZipReader, BlobReader, BlobWriter } from '@zip.js/zip.js';
+import { saveDictionary, hasDictionary } from './dict-store.js';
+import { validateDictFiles } from './lemma-util.js';
 
 /**
  * Reads stored style settings via `storageGet` and populates all inputs in `doc`.
@@ -102,12 +105,58 @@ export async function resetOptionsToDefaults(doc, storageSet, messageFn) {
   await onStyleChange(doc, storageSet, messageFn);
 }
 
+/**
+ * Reflects the current dictionary status in `#dictStatus`.
+ *
+ * @param {Document} doc - The options document.
+ */
+export async function refreshDictStatus(doc) {
+  const el = doc.getElementById('dictStatus');
+  if (!el) return;
+  const loaded = await hasDictionary().catch(() => false);
+  el.textContent = loaded ? 'Loaded' : 'Not loaded';
+}
+
+/**
+ * Extracts dictionary files from a zip and stores them, validating completeness first.
+ *
+ * @param {Document} doc - The options document.
+ * @param {File} file - The user-selected zip archive.
+ */
+export async function onImportDict(doc, file) {
+  const status = doc.getElementById('dictStatus');
+  if (status) status.textContent = 'Importing…';
+  try {
+    const reader = new ZipReader(new BlobReader(file), { useWebWorkers: false });
+    const entries = await reader.getEntries();
+    const fileEntries = entries.filter((e) => !e.directory);
+    const names = fileEntries.map((e) => e.filename.split('/').pop());
+    const { ok, missing } = validateDictFiles(names);
+    if (!ok) {
+      await reader.close();
+      if (status) status.textContent = `Missing: ${missing.join(', ')}`;
+      return;
+    }
+    const fileMap = new Map();
+    for (const entry of fileEntries) {
+      const name = entry.filename.split('/').pop();
+      const blob = await entry.getData(new BlobWriter());
+      fileMap.set(name, blob);
+    }
+    await reader.close();
+    await saveDictionary(fileMap);
+    await refreshDictStatus(doc);
+  } catch (e) {
+    if (status) status.textContent = 'Import failed';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Browser wiring — only runs when loaded as a real extension page
 // ---------------------------------------------------------------------------
 
-if (typeof document !== 'undefined' && typeof chrome !== 'undefined') {
-  const ext = typeof browser !== 'undefined' ? browser : chrome;
+const ext = typeof browser !== 'undefined' ? browser : (typeof chrome !== 'undefined' ? chrome : null);
+if (typeof document !== 'undefined' && ext) {
 
   const storageGet = (defaults) =>
     new Promise((resolve) => ext.storage.local.get(defaults, resolve));
@@ -118,7 +167,7 @@ if (typeof document !== 'undefined' && typeof chrome !== 'undefined') {
   const messageFn = async (msg) => {
     const tabs = await ext.tabs.query({});
     for (const tab of tabs) {
-      if (!tab.url?.startsWith('chrome-extension://')) {
+      if (!tab.url?.startsWith('chrome-extension://') && !tab.url?.startsWith('moz-extension://')) {
         try { await ext.tabs.sendMessage(tab.id, msg); } catch {}
       }
     }
@@ -161,6 +210,15 @@ if (typeof document !== 'undefined' && typeof chrome !== 'undefined') {
       loadStyleSettings(document, storageGet);
     }
   });
+
+  document.getElementById('importDictBtn')?.addEventListener('click', () => {
+    document.getElementById('dictFileInput')?.click();
+  });
+  document.getElementById('dictFileInput')?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) onImportDict(document, file);
+  });
+  refreshDictStatus(document);
 
   loadStyleSettings(document, storageGet);
 }

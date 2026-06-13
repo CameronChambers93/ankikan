@@ -13,11 +13,19 @@
   <section>
     <label for="fieldName">Anki field name</label>
     <input id="fieldName" type="text" placeholder="Expression" spellcheck="false">
-    <div class="row lemma-row">
-      <label class="toggle-label">
-        <input id="useLemma" type="checkbox">
-        Use dictionary forms <span class="hint">(lemma server on port 7654)</span>
-      </label>
+    <div class="row">
+      <label for="lemmaMode">Dictionary forms</label>
+      <select id="lemmaMode">
+        <option value="off">Off</option>
+        <option value="server">Server (port 7654)</option>
+        <option value="local">Local (in-browser)</option>
+      </select>
+    </div>
+    <div id="importRow">
+      <div id="importDictRow" class="hidden">
+        <button id="importDictBtn" type="button">Import dictionary…</button>
+        <span id="dictStatus"></span>
+      </div>
     </div>
   </section>
 
@@ -71,6 +79,6 @@
 
   <div id="status" class="status"></div>
 
-  <script type="module" src="popup.js"></script>
+  <script type="module" src="dist/popup.js"></script>
 </body>
 </html>

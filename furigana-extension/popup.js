@@ -1,4 +1,7 @@
-const ext = typeof browser !== 'undefined' ? browser : chrome;
+import { resolveLemmaMode } from './lemma-util.js';
+import { hasDictionary } from './dict-store.js';
+
+const ext = (typeof browser !== 'undefined' ? browser : (typeof chrome !== 'undefined' ? chrome : null));
 
 const DEFAULTS = {
   fieldName: 'Expression',
@@ -8,156 +11,201 @@ const DEFAULTS = {
   furiganaUnlearned: true,
   furiganaLearning: true,
   furiganaLearned: false,
+  lemmaMode: null,
   useLemma: false,
 };
 
-/** Shorthand for `document.getElementById`. */
-const $ = (id) => document.getElementById(id);
+/**
+ * Shows the dictionary import row only in local mode.
+ *
+ * @param {Document} doc - The popup document.
+ * @param {string} mode - The current lemma mode.
+ */
+export function updateLemmaModeUI(doc, mode) {
+  const hidden = mode !== 'local';
+  const row = doc.getElementById('importDictRow');
+  if (row) row.classList.toggle('hidden', hidden);
+  const outer = doc.getElementById('importRow');
+  if (outer) outer.classList.toggle('hidden', hidden);
+}
+
+/**
+ * Reflects the current dictionary status in `#dictStatus`.
+ *
+ * @param {Document} doc - The popup document.
+ */
+async function refreshDictStatus(doc) {
+  const el = doc.getElementById('dictStatus');
+  if (!el) return;
+  const loaded = await hasDictionary().catch(() => false);
+  el.textContent = loaded ? 'Loaded' : 'Not loaded';
+}
 
 /**
  * Loads saved settings from extension storage and populates all popup form fields.
- * Falls back to `DEFAULTS` for any key not yet persisted.
+ * Resolves the lemma mode (migrating from the legacy `useLemma` boolean when needed)
+ * and persists the migration when a `set` function is supplied.
+ *
+ * @param {Document} doc - The popup document.
+ * @param {(defaults: object) => Promise<object>} storageGet - Reads stored settings.
+ * @param {(obj: object) => Promise<void>} [storageSet] - Persists settings (for migration write-back).
  */
-async function loadSettings() {
-  const s = await ext.storage.local.get(DEFAULTS);
-  $('fieldName').value = s.fieldName;
-  $('allowedUrls').value = (s.allowedUrls || []).join('\n');
-  $('blockedUrls').value = (s.blockedUrls || []).join('\n');
-  $('furiganaGlobal').checked = s.furiganaGlobal;
-  $('furiganaUnlearned').checked = s.furiganaUnlearned;
-  $('furiganaLearning').checked = s.furiganaLearning;
-  $('furiganaLearned').checked = s.furiganaLearned;
-  $('useLemma').checked = s.useLemma;
-  updatePerStatusState(s.furiganaGlobal);
+export async function loadSettings(doc, storageGet, storageSet) {
+  const s = await storageGet(DEFAULTS);
+  const mode = resolveLemmaMode(s);
+  doc.getElementById('fieldName').value = s.fieldName;
+  doc.getElementById('allowedUrls').value = (s.allowedUrls || []).join('\n');
+  doc.getElementById('blockedUrls').value = (s.blockedUrls || []).join('\n');
+  doc.getElementById('furiganaGlobal').checked = s.furiganaGlobal;
+  doc.getElementById('furiganaUnlearned').checked = s.furiganaUnlearned;
+  doc.getElementById('furiganaLearning').checked = s.furiganaLearning;
+  doc.getElementById('furiganaLearned').checked = s.furiganaLearned;
+  doc.getElementById('lemmaMode').value = mode;
+  updatePerStatusState(doc, s.furiganaGlobal);
+  updateLemmaModeUI(doc, mode);
+  if (typeof s.lemmaMode !== 'string' && storageSet) {
+    await storageSet({ lemmaMode: mode });
+  }
+  await refreshDictStatus(doc);
 }
 
 /**
  * Reads the current form state and returns a normalized settings object.
- * Trims whitespace, splits textarea lines into arrays, and falls back to `'Expression'`
- * if the field name input is empty.
  *
- * @returns {object} Settings object ready to be passed to `ext.storage.local.set`.
+ * @param {Document} doc - The popup document.
+ * @returns {object} Settings object ready to be persisted.
  */
-function currentSettings() {
+export function currentSettings(doc) {
   return {
-    fieldName: $('fieldName').value.trim() || 'Expression',
-    allowedUrls: $('allowedUrls').value.split('\n').map((u) => u.trim()).filter(Boolean),
-    blockedUrls: $('blockedUrls').value.split('\n').map((u) => u.trim()).filter(Boolean),
-    furiganaGlobal: $('furiganaGlobal').checked,
-    furiganaUnlearned: $('furiganaUnlearned').checked,
-    furiganaLearning: $('furiganaLearning').checked,
-    furiganaLearned: $('furiganaLearned').checked,
-    useLemma: $('useLemma').checked,
+    fieldName: doc.getElementById('fieldName').value.trim() || 'Expression',
+    allowedUrls: doc.getElementById('allowedUrls').value.split('\n').map((u) => u.trim()).filter(Boolean),
+    blockedUrls: doc.getElementById('blockedUrls').value.split('\n').map((u) => u.trim()).filter(Boolean),
+    furiganaGlobal: doc.getElementById('furiganaGlobal').checked,
+    furiganaUnlearned: doc.getElementById('furiganaUnlearned').checked,
+    furiganaLearning: doc.getElementById('furiganaLearning').checked,
+    furiganaLearned: doc.getElementById('furiganaLearned').checked,
+    lemmaMode: doc.getElementById('lemmaMode').value,
   };
-}
-
-/** Persists the current form state to `ext.storage.local`. */
-async function saveSettings() {
-  await ext.storage.local.set(currentSettings());
 }
 
 /**
  * Enables or disables the per-status furigana checkboxes based on the global furigana toggle.
- * When disabled, the controls are visually greyed out via the `disabled` CSS class.
  *
+ * @param {Document} doc - The popup document.
  * @param {boolean} enabled - Whether the global furigana toggle is checked.
  */
-function updatePerStatusState(enabled) {
-  $('furiganaPerStatus').classList.toggle('disabled', !enabled);
+function updatePerStatusState(doc, enabled) {
+  doc.getElementById('furiganaPerStatus').classList.toggle('disabled', !enabled);
 }
 
-/**
- * Displays a status message in the popup footer bar.
- *
- * @param {string} msg - Message text to display.
- * @param {string} [type=''] - Optional CSS modifier class (e.g. `'ok'` or `'error'`).
- */
-function setStatus(msg, type = '') {
-  const el = $('status');
-  el.textContent = msg;
-  el.className = 'status ' + type;
-}
+if (ext) {
+  /** Shorthand for `document.getElementById`. */
+  const $ = (id) => document.getElementById(id);
 
-/**
- * Returns the currently active tab in the current browser window.
- *
- * @returns {Promise<chrome.tabs.Tab>} The active tab object.
- */
-async function getActiveTab() {
-  const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
-  return tab;
-}
+  const storageGet = (defaults) => ext.storage.local.get(defaults);
+  const storageSet = (obj) => ext.storage.local.set(obj);
 
-/**
- * Sends a message to the content script running in the given tab.
- * Returns `null` if the content script is not injected on that page
- * (e.g. `about:`, `chrome:`, or `moz-extension:` URLs).
- *
- * @param {chrome.tabs.Tab} tab - The target tab.
- * @param {object} msg - Message object to send.
- * @returns {Promise<any|null>} The content script's response, or null on failure.
- */
-async function sendToContentScript(tab, msg) {
-  try {
-    return await ext.tabs.sendMessage(tab.id, msg);
-  } catch (e) {
-    // Content script not injected on this page (e.g. about:, chrome:, moz-extension:)
-    return null;
+  /** Persists the current form state to `ext.storage.local`. */
+  const saveSettings = () => ext.storage.local.set(currentSettings(document));
+
+  /**
+   * Displays a status message in the popup footer bar.
+   *
+   * @param {string} msg - Message text to display.
+   * @param {string} [type=''] - Optional CSS modifier class.
+   */
+  const setStatus = (msg, type = '') => {
+    const el = $('status');
+    el.textContent = msg;
+    el.className = 'status ' + type;
+  };
+
+  /** Returns the currently active tab in the current browser window. */
+  const getActiveTab = async () => {
+    const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
+    return tab;
+  };
+
+  /**
+   * Sends a message to the content script running in the given tab.
+   * Returns `null` if the content script is not injected on that page.
+   */
+  const sendToContentScript = async (tab, msg) => {
+    try {
+      return await ext.tabs.sendMessage(tab.id, msg);
+    } catch (e) {
+      return null;
+    }
+  };
+
+  /**
+   * Handles changes to any furigana visibility checkbox: saves settings, refreshes the
+   * per-status control state, then live-updates the active tab.
+   */
+  const onFuriganaChange = async () => {
+    await saveSettings();
+    const settings = currentSettings(document);
+    updatePerStatusState(document, settings.furiganaGlobal);
+    const tab = await getActiveTab();
+    if (tab) await sendToContentScript(tab, { action: 'refreshFurigana', settings });
+  };
+
+  $('furiganaGlobal').addEventListener('change', onFuriganaChange);
+  $('furiganaUnlearned').addEventListener('change', onFuriganaChange);
+  $('furiganaLearning').addEventListener('change', onFuriganaChange);
+  $('furiganaLearned').addEventListener('change', onFuriganaChange);
+
+  $('openOptionsBtn').addEventListener('click', () => ext.runtime.openOptionsPage());
+
+  $('fieldName').addEventListener('change', saveSettings);
+  $('allowedUrls').addEventListener('change', saveSettings);
+  $('blockedUrls').addEventListener('change', saveSettings);
+
+  $('lemmaMode').addEventListener('change', async () => {
+    await saveSettings();
+    updateLemmaModeUI(document, $('lemmaMode').value);
+    await refreshDictStatus(document);
+  });
+
+  $('importDictBtn').addEventListener('click', () => ext.runtime.openOptionsPage());
+
+  $('scanBtn').addEventListener('click', async () => {
+    await saveSettings();
+    const tab = await getActiveTab();
+    if (!tab) {
+      setStatus('No active tab found.', 'error');
+      return;
+    }
+
+    $('scanBtn').disabled = true;
+    setStatus('Scanning…');
+
+    const result = await sendToContentScript(tab, { action: 'scan' });
+
+    $('scanBtn').disabled = false;
+
+    if (!result) {
+      setStatus('Cannot run on this page.', 'error');
+      return;
+    }
+    if (result.error) {
+      const isConnErr = result.error === 'connection' || /connect/i.test(result.error);
+      setStatus(isConnErr ? 'Could not reach Anki. Is it running?' : `Error: ${result.error}`, 'error');
+      return;
+    }
+    setStatus(`${result.matched} / ${result.found} words matched`, 'ok');
+  });
+
+  // Re-sync the popup when storage changes underneath it (e.g. settings written by another
+  // surface, or by automated tooling) so the displayed lemma mode always reflects storage.
+  if (ext.storage.onChanged) {
+    ext.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local') return;
+      if ('lemmaMode' in changes || 'useLemma' in changes) {
+        loadSettings(document, storageGet);
+      }
+    });
   }
+
+  loadSettings(document, storageGet, storageSet);
 }
-
-/**
- * Handles changes to any furigana visibility checkbox.
- * Saves the updated settings, refreshes the per-status control state, then sends
- * a `refreshFurigana` message to the active tab so the page updates immediately
- * without requiring a full rescan.
- */
-async function onFuriganaChange() {
-  await saveSettings();
-  const settings = currentSettings();
-  updatePerStatusState(settings.furiganaGlobal);
-  const tab = await getActiveTab();
-  if (tab) await sendToContentScript(tab, { action: 'refreshFurigana', settings });
-}
-
-$('furiganaGlobal').addEventListener('change', onFuriganaChange);
-$('furiganaUnlearned').addEventListener('change', onFuriganaChange);
-$('furiganaLearning').addEventListener('change', onFuriganaChange);
-$('furiganaLearned').addEventListener('change', onFuriganaChange);
-
-$('openOptionsBtn').addEventListener('click', () => ext.runtime.openOptionsPage());
-
-// Field/URL/lemma changes just save; scan button applies them
-$('fieldName').addEventListener('change', saveSettings);
-$('allowedUrls').addEventListener('change', saveSettings);
-$('blockedUrls').addEventListener('change', saveSettings);
-$('useLemma').addEventListener('change', saveSettings);
-
-$('scanBtn').addEventListener('click', async () => {
-  await saveSettings();
-  const tab = await getActiveTab();
-  if (!tab) {
-    setStatus('No active tab found.', 'error');
-    return;
-  }
-
-  $('scanBtn').disabled = true;
-  setStatus('Scanning…');
-
-  const result = await sendToContentScript(tab, { action: 'scan' });
-
-  $('scanBtn').disabled = false;
-
-  if (!result) {
-    setStatus('Cannot run on this page.', 'error');
-    return;
-  }
-  if (result.error) {
-    const isConnErr = result.error === 'connection' || /connect/i.test(result.error);
-    setStatus(isConnErr ? 'Could not reach Anki. Is it running?' : `Error: ${result.error}`, 'error');
-    return;
-  }
-  setStatus(`${result.matched} / ${result.found} words matched`, 'ok');
-});
-
-loadSettings();
