@@ -9,6 +9,7 @@ import { STYLE_DEFAULTS } from './style-util.js';
 // ---------------------------------------------------------------------------
 // Helper — build a JSDOM document that mirrors the options.html input contract.
 // All input IDs are the DOM contract shared between options.html and options.js.
+// Issue #11 adds: #importDictBtn, #dictFileInput, #dictStatus
 // ---------------------------------------------------------------------------
 
 function makeOptionsDoc({
@@ -49,6 +50,10 @@ function makeOptionsDoc({
     <input id="learned-bg-opacity"         type="number"  value="${learnedBgOpacity}">
 
     <button id="resetStylesBtn">Reset to defaults</button>
+
+    <button id="importDictBtn" type="button">Import dictionary…</button>
+    <input id="dictFileInput" type="file" accept=".zip" style="display:none">
+    <span id="dictStatus"></span>
   </body></html>`);
   return window.document;
 }
@@ -407,5 +412,196 @@ describe('popup.js openOptionsBtn click (AC4 popup)', () => {
 
     doc.getElementById('openOptionsBtn').click();
     expect(openOptionsPageSpy).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #11 — onImportDict is exported from options.js and handles zip import
+//
+// The dictionary import flow moves from popup.js to options.js so that the
+// file dialog can open without closing the popup (Firefox bug).
+// ---------------------------------------------------------------------------
+
+describe('onImportDict (Issue #11)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('sets #dictStatus to "Loaded" when zip contains all required files and save succeeds', async () => {
+    // A fully valid zip archive must result in a visible "Loaded" status so the
+    // user has confirmation that the dictionary was imported successfully.
+    vi.mock('./dict-store.js', () => ({
+      saveDictionary: vi.fn().mockResolvedValue(undefined),
+      hasDictionary: vi.fn().mockResolvedValue(true),
+    }));
+
+    // All 12 required kuromoji filenames present in the zip
+    const REQUIRED = [
+      'base.dat.gz', 'cc.dat.gz', 'check.dat.gz', 'tid.dat.gz', 'tid_map.dat.gz',
+      'tid_pos.dat.gz', 'unk.dat.gz', 'unk_char.dat.gz', 'unk_compat.dat.gz',
+      'unk_invoke.dat.gz', 'unk_map.dat.gz', 'unk_pos.dat.gz',
+    ];
+    const fakeEntries = REQUIRED.map((name) => ({
+      directory: false,
+      filename: name,
+      getData: vi.fn().mockResolvedValue(new Blob(['data'])),
+    }));
+
+    vi.mock('@zip.js/zip.js', () => ({
+      ZipReader: vi.fn().mockImplementation(() => ({
+        getEntries: vi.fn().mockResolvedValue(fakeEntries),
+        close: vi.fn().mockResolvedValue(undefined),
+      })),
+      BlobReader: vi.fn(),
+      BlobWriter: vi.fn(),
+    }));
+
+    const { onImportDict } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    const fakeFile = new Blob(['zip content'], { type: 'application/zip' });
+    await onImportDict(doc, fakeFile);
+    expect(doc.getElementById('dictStatus').textContent).toBe('Loaded');
+  });
+
+  it('sets #dictStatus to "Missing: unk_pos.dat.gz" and does not call saveDictionary when unk_pos.dat.gz is absent', async () => {
+    // An incomplete archive must be rejected before writing to IndexedDB; the
+    // status must name the specific missing file so the user can diagnose the problem.
+    const saveDictionaryMock = vi.fn().mockResolvedValue(undefined);
+    vi.mock('./dict-store.js', () => ({
+      saveDictionary: saveDictionaryMock,
+      hasDictionary: vi.fn().mockResolvedValue(false),
+    }));
+
+    // All required files EXCEPT unk_pos.dat.gz
+    const INCOMPLETE = [
+      'base.dat.gz', 'cc.dat.gz', 'check.dat.gz', 'tid.dat.gz', 'tid_map.dat.gz',
+      'tid_pos.dat.gz', 'unk.dat.gz', 'unk_char.dat.gz', 'unk_compat.dat.gz',
+      'unk_invoke.dat.gz', 'unk_map.dat.gz',
+      // unk_pos.dat.gz deliberately absent
+    ];
+    const fakeEntries = INCOMPLETE.map((name) => ({
+      directory: false,
+      filename: name,
+      getData: vi.fn().mockResolvedValue(new Blob(['data'])),
+    }));
+
+    vi.mock('@zip.js/zip.js', () => ({
+      ZipReader: vi.fn().mockImplementation(() => ({
+        getEntries: vi.fn().mockResolvedValue(fakeEntries),
+        close: vi.fn().mockResolvedValue(undefined),
+      })),
+      BlobReader: vi.fn(),
+      BlobWriter: vi.fn(),
+    }));
+
+    const { onImportDict } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    const fakeFile = new Blob(['zip content'], { type: 'application/zip' });
+    await onImportDict(doc, fakeFile);
+    expect(doc.getElementById('dictStatus').textContent).toBe('Missing: unk_pos.dat.gz');
+    expect(saveDictionaryMock).not.toHaveBeenCalled();
+  });
+
+  it('sets #dictStatus to "Import failed" when ZipReader throws', async () => {
+    // A corrupt or unreadable archive must not crash the options page; instead
+    // the failure must be surfaced as a human-readable status message.
+    vi.mock('./dict-store.js', () => ({
+      saveDictionary: vi.fn(),
+      hasDictionary: vi.fn().mockResolvedValue(false),
+    }));
+
+    vi.mock('@zip.js/zip.js', () => ({
+      ZipReader: vi.fn().mockImplementation(() => ({
+        getEntries: vi.fn().mockRejectedValue(new Error('bad zip')),
+        close: vi.fn().mockResolvedValue(undefined),
+      })),
+      BlobReader: vi.fn(),
+      BlobWriter: vi.fn(),
+    }));
+
+    const { onImportDict } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    const fakeFile = new Blob(['not a zip'], { type: 'application/zip' });
+    await onImportDict(doc, fakeFile);
+    expect(doc.getElementById('dictStatus').textContent).toBe('Import failed');
+  });
+
+  it('does not throw when #dictStatus element is absent from the document', async () => {
+    // The function must be safe to call even if the element is missing so that
+    // partial renders or programmatic calls from other contexts do not crash.
+    vi.mock('./dict-store.js', () => ({
+      saveDictionary: vi.fn().mockResolvedValue(undefined),
+      hasDictionary: vi.fn().mockResolvedValue(false),
+    }));
+
+    vi.mock('@zip.js/zip.js', () => ({
+      ZipReader: vi.fn().mockImplementation(() => ({
+        getEntries: vi.fn().mockResolvedValue([]),
+        close: vi.fn().mockResolvedValue(undefined),
+      })),
+      BlobReader: vi.fn(),
+      BlobWriter: vi.fn(),
+    }));
+
+    const { onImportDict } = await import('./options.js');
+    // Build a doc with no #dictStatus element
+    const { window } = new JSDOM(`<!DOCTYPE html><html><body></body></html>`);
+    const doc = window.document;
+    const fakeFile = new Blob(['zip content'], { type: 'application/zip' });
+    await expect(onImportDict(doc, fakeFile)).resolves.not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #11 — refreshDictStatus is exported from options.js
+//
+// The status-display helper moves to options.js along with the import flow.
+// ---------------------------------------------------------------------------
+
+describe('refreshDictStatus (Issue #11)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('sets #dictStatus.textContent to "Loaded" when hasDictionary resolves true', async () => {
+    // A loaded dictionary must be visible to the user on the options page so they
+    // know the import was successful and the local tokenizer is ready to use.
+    vi.mock('./dict-store.js', () => ({
+      saveDictionary: vi.fn(),
+      hasDictionary: vi.fn().mockResolvedValue(true),
+    }));
+
+    const { refreshDictStatus } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    await refreshDictStatus(doc);
+    expect(doc.getElementById('dictStatus').textContent).toBe('Loaded');
+  });
+
+  it('sets #dictStatus.textContent to "Not loaded" when hasDictionary resolves false', async () => {
+    // An absent dictionary must be indicated clearly so the user knows they need
+    // to import one before the local tokenizer can function.
+    vi.mock('./dict-store.js', () => ({
+      saveDictionary: vi.fn(),
+      hasDictionary: vi.fn().mockResolvedValue(false),
+    }));
+
+    const { refreshDictStatus } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    await refreshDictStatus(doc);
+    expect(doc.getElementById('dictStatus').textContent).toBe('Not loaded');
+  });
+
+  it('sets #dictStatus.textContent to "Not loaded" when hasDictionary rejects', async () => {
+    // An IndexedDB error must not propagate to the caller; the status must fall
+    // back to "Not loaded" so the UI remains usable even when storage is broken.
+    vi.mock('./dict-store.js', () => ({
+      saveDictionary: vi.fn(),
+      hasDictionary: vi.fn().mockRejectedValue(new Error('IDB unavailable')),
+    }));
+
+    const { refreshDictStatus } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    await refreshDictStatus(doc);
+    expect(doc.getElementById('dictStatus').textContent).toBe('Not loaded');
   });
 });
