@@ -3,6 +3,7 @@ import { resolveLemmaMode, filterLemmaMap } from './lemma-util.js';
 import DynamicDictionaries from 'kuromoji/src/dict/DynamicDictionaries.js';
 import Tokenizer from 'kuromoji/src/Tokenizer.js';
 import { Zlib } from 'zlibjs/bin/gunzip.min.js';
+import { groupCandidates } from './content.grouping.js';
 
 const ext = typeof browser !== 'undefined' ? browser : (typeof chrome !== 'undefined' ? chrome : null);
 
@@ -117,42 +118,6 @@ async function ankiRequest(body) {
 }
 
 /**
- * Queries the local lemma server for dictionary (base) forms of surface words.
- * Groups spans by their nearest block ancestor (`p`, `li`, `td`, etc.) so the tokenizer
- * receives full sentence context rather than isolated word fragments, which improves
- * accuracy for inflected verbs and adjectives.
- *
- * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
- * @returns {Promise<Object.<string, string>>} Map of `{surface: lemma}` for words whose
- *   dictionary form differs from their surface form.
- */
-/**
- * Groups candidate spans by their nearest block ancestor so each block's full text can be
- * tokenized with context. Returns the per-block text and the set of candidate surfaces in it.
- *
- * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
- * @returns {{text: string, surfaceSet: Set<string>}[]} Per-block text and candidate surfaces.
- */
-function groupByBlock(candidates) {
-  const blocks = new Map();
-  for (const { span, word } of candidates) {
-    const block = span.closest('p, li, td, th, dd, dt, blockquote') || span.parentElement;
-    if (!blocks.has(block)) blocks.set(block, new Set());
-    blocks.get(block).add(word);
-  }
-
-  const groups = [];
-  for (const [block, surfaceSet] of blocks) {
-    // Use full block textContent for context so the tokenizer can disambiguate
-    // inflected forms (e.g. 伝え as verb stem vs noun) via surrounding text.
-    // A trailing newline acts as a sentence-boundary hint without affecting results.
-    const text = (block.textContent || '').trim() + '\n';
-    if (text.trim()) groups.push({ text, surfaceSet });
-  }
-  return groups;
-}
-
-/**
  * Dispatches lemma resolution to the configured backend.
  *
  * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
@@ -167,17 +132,14 @@ async function fetchLemmas(candidates, mode) {
 
 /**
  * Queries the local lemma server (port 7654) via the background service worker.
+ * Groups spans by block ancestor so the tokenizer receives full sentence context.
  *
  * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
  * @returns {Promise<Object.<string, string>>} Map of `{surface: lemma}`.
  */
 async function fetchLemmasFromServer(candidates) {
-  const paragraphs = groupByBlock(candidates).map(({ text, surfaceSet }) => ({
-    text,
-    surfaces: [...surfaceSet],
-  }));
-
-  if (paragraphs.length === 0) return {};
+  const paragraphs = groupCandidates(candidates, extractWord);
+  if (!paragraphs.length) return {};
 
   return ext.runtime.sendMessage({ action: 'lemmaQuery', body: { paragraphs } });
 }
@@ -196,9 +158,9 @@ async function tokenizeLocally(candidates) {
   if (!tokenizer) return {};
 
   const lemmaMap = {};
-  for (const { text, surfaceSet } of groupByBlock(candidates)) {
+  for (const { text, surfaces } of groupCandidates(candidates, extractWord)) {
     const tokens = tokenizer.tokenize(text);
-    Object.assign(lemmaMap, filterLemmaMap(tokens, surfaceSet));
+    Object.assign(lemmaMap, filterLemmaMap(tokens, new Set(surfaces)));
   }
   return lemmaMap;
 }
