@@ -55,3 +55,4 @@ dmypy.json
 cython_debug/
 .ruff_cache/
 .pypirc
+bash.exe.stackdump

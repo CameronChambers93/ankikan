@@ -1,5 +1,7 @@
 'use strict';
 
+import { readDictFile } from './dict-store.js';
+
 /** Cross-browser API shim — resolves to `browser` (Firefox) or `chrome` (Chromium). */
 const ext = typeof browser !== 'undefined' ? browser : chrome;
 
@@ -33,5 +35,21 @@ ext.runtime.onMessage.addListener((msg) => {
     })
       .then((r) => r.json())
       .catch(() => ({}));
+  }
+  if (msg.action === 'getDictFile') {
+    return readDictFile(msg.name)
+      .then((buf) => {
+        if (!buf) return null;
+        // Chrome's message passing serialises ArrayBuffers as {} via JSON.
+        // Return base64 so the binary data survives the round trip.
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        const chunk = 8192;
+        for (let i = 0; i < bytes.byteLength; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunk, bytes.byteLength)));
+        }
+        return btoa(binary);
+      })
+      .catch(() => null);
   }
 });

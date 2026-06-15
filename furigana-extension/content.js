@@ -1,4 +1,9 @@
 import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet, injectStyles, resolveStyleSettings } from './style-util.js';
+import { resolveLemmaMode, filterLemmaMap } from './lemma-util.js';
+import DynamicDictionaries from 'kuromoji/src/dict/DynamicDictionaries.js';
+import Tokenizer from 'kuromoji/src/Tokenizer.js';
+import { Zlib } from 'zlibjs/bin/gunzip.min.js';
+import { groupCandidates } from './content.grouping.js';
 
 const ext = typeof browser !== 'undefined' ? browser : (typeof chrome !== 'undefined' ? chrome : null);
 
@@ -18,6 +23,7 @@ const DEFAULTS = {
   furiganaUnlearned: true,
   furiganaLearning: true,
   furiganaLearned: false,
+  lemmaMode: null,
   useLemma: false,
   styleSettings: null,
 };
@@ -112,35 +118,88 @@ async function ankiRequest(body) {
 }
 
 /**
- * Queries the local lemma server for dictionary (base) forms of surface words.
- * Groups spans by their nearest block ancestor (`p`, `li`, `td`, etc.) so the tokenizer
- * receives full sentence context rather than isolated word fragments, which improves
- * accuracy for inflected verbs and adjectives.
+ * Dispatches lemma resolution to the configured backend.
  *
  * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
- * @returns {Promise<Object.<string, string>>} Map of `{surface: lemma}` for words whose
- *   dictionary form differs from their surface form.
+ * @param {'server'|'local'} mode - The resolved lemma mode.
+ * @returns {Promise<Object.<string, string>>} Map of `{surface: lemma}`.
  */
-async function fetchLemmas(candidates) {
-  const blocks = new Map();
-  for (const { span, word } of candidates) {
-    const block = span.closest('p, li, td, th, dd, dt, blockquote') || span.parentElement;
-    if (!blocks.has(block)) blocks.set(block, new Set());
-    blocks.get(block).add(word);
-  }
+async function fetchLemmas(candidates, mode) {
+  if (mode === 'server') return fetchLemmasFromServer(candidates);
+  if (mode === 'local') return tokenizeLocally(candidates);
+  return {};
+}
 
-  const paragraphs = [];
-  for (const [block, surfaceSet] of blocks) {
-    const allSpans = Array.from(block.querySelectorAll('span'));
-    const text = allSpans.map(extractWord).join('');
-    if (text) {
-      paragraphs.push({ text, surfaces: [...surfaceSet] });
-    }
-  }
-
-  if (paragraphs.length === 0) return {};
+/**
+ * Queries the local lemma server (port 7654) via the background service worker.
+ * Groups spans by block ancestor so the tokenizer receives full sentence context.
+ *
+ * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
+ * @returns {Promise<Object.<string, string>>} Map of `{surface: lemma}`.
+ */
+async function fetchLemmasFromServer(candidates) {
+  const paragraphs = groupCandidates(candidates, extractWord);
+  if (!paragraphs.length) return {};
 
   return ext.runtime.sendMessage({ action: 'lemmaQuery', body: { paragraphs } });
+}
+
+let _tokenizerPromise = null;
+
+/**
+ * Tokenizes each block's text in-browser with kuromoji and derives surface→lemma mappings.
+ *
+ * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
+ * @returns {Promise<Object.<string, string>>} Map of `{surface: lemma}`.
+ */
+async function tokenizeLocally(candidates) {
+  if (!_tokenizerPromise) _tokenizerPromise = buildKuromoji();
+  const tokenizer = await _tokenizerPromise;
+  if (!tokenizer) return {};
+
+  const lemmaMap = {};
+  for (const { text, surfaces } of groupCandidates(candidates, extractWord)) {
+    const tokens = tokenizer.tokenize(text);
+    Object.assign(lemmaMap, filterLemmaMap(tokens, new Set(surfaces)));
+  }
+  return lemmaMap;
+}
+
+/**
+ * Builds a kuromoji tokenizer whose gzipped dictionary files are fetched from the
+ * extension-origin IndexedDB via the background service worker (`getDictFile`) and gunzipped
+ * in-page. Resolves to null on failure (e.g. no dictionary imported).
+ *
+ * @returns {Promise<object|null>} The kuromoji tokenizer, or null if the dictionary is absent.
+ */
+async function buildKuromoji() {
+  const fetchFile = (name) =>
+    ext.runtime.sendMessage({ action: 'getDictFile', name })
+      .then((b64) => {
+        if (!b64) throw new Error('dict file not found: ' + name);
+        // Background base64-encodes ArrayBuffers to survive Chrome message serialisation.
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return new Zlib.Gunzip(bytes).decompress().buffer;
+      });
+
+  try {
+    const [trieBuffers, tokenInfoBuffers, [ccBuf], unkBuffers] = await Promise.all([
+      Promise.all(['base.dat.gz', 'check.dat.gz'].map(fetchFile)),
+      Promise.all(['tid.dat.gz', 'tid_pos.dat.gz', 'tid_map.dat.gz'].map(fetchFile)),
+      Promise.all(['cc.dat.gz'].map(fetchFile)),
+      Promise.all(['unk.dat.gz', 'unk_pos.dat.gz', 'unk_map.dat.gz', 'unk_char.dat.gz', 'unk_compat.dat.gz', 'unk_invoke.dat.gz'].map(fetchFile)),
+    ]);
+    const dic = new DynamicDictionaries();
+    dic.loadTrie(new Int32Array(trieBuffers[0]), new Int32Array(trieBuffers[1]));
+    dic.loadTokenInfoDictionaries(new Uint8Array(tokenInfoBuffers[0]), new Uint8Array(tokenInfoBuffers[1]), new Uint8Array(tokenInfoBuffers[2]));
+    dic.loadConnectionCosts(new Int16Array(ccBuf));
+    dic.loadUnknownDictionaries(new Uint8Array(unkBuffers[0]), new Uint8Array(unkBuffers[1]), new Uint8Array(unkBuffers[2]), new Uint8Array(unkBuffers[3]), new Uint32Array(unkBuffers[4]), new Uint8Array(unkBuffers[5]));
+    return new Tokenizer(dic);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -173,12 +232,12 @@ async function scanPage(settings) {
   for (const { span, word } of candidates) {
     if (span.dataset.lemma) lemmaMap[word] = span.dataset.lemma;
   }
-  if (settings.useLemma) {
+  const mode = resolveLemmaMode(settings);
+  if (mode !== 'off') {
     try {
-      const serverLemmas = await fetchLemmas(candidates);
-      Object.assign(lemmaMap, serverLemmas);
+      Object.assign(lemmaMap, await fetchLemmas(candidates, mode));
     } catch {
-      // Server not running; fall back to data-lemma / surface form.
+      // Backend unavailable; fall back to data-lemma / surface form.
     }
   }
 

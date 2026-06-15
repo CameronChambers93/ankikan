@@ -108,6 +108,7 @@ if (ext) {
   /** Persists the current form state to `ext.storage.local`. */
   const saveSettings = () => ext.storage.local.set(currentSettings(document));
 
+
   /**
    * Displays a status message in the popup footer bar.
    *
