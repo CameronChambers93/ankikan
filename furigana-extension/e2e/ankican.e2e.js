@@ -1,9 +1,14 @@
 /**
- * E2E tests for the AnkiKan extension using Playwright + a mock AnkiConnect server.
+ * E2E tests for the AnkiKan extension against a live AnkiConnect instance.
  *
- * The background service worker calls fetch('http://127.0.0.1:8765', ...) directly,
- * so page.route() cannot intercept it. Instead we spin up a real Node http server
- * on port 8765 that returns pre-canned AnkiConnect responses.
+ * Prerequisites:
+ *   - Anki must be running with the AnkiConnect add-on active (localhost:8765).
+ *   - The "AnkiKan-E2E" deck must exist with the following cards:
+ *       けが    — Expression field, type 0 (new/unlearned)
+ *       アニメ  — Expression field, type 1 (learning)
+ *       日本語  — Expression field, type 2 (review/learned)
+ *   Run the setup script to create/restore this deck:
+ *       node e2e/setup-anki-e2e.js
  *
  * Test coverage:
  *   - Kana-only spans (hiragana けが, katakana アニメ) are highlighted          [issue #1]
@@ -13,82 +18,11 @@
  */
 
 import { test, expect, chromium } from '@playwright/test';
-import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, '..');
-const ANKI_PORT = 8765;
-
-// ---------------------------------------------------------------------------
-// Mock AnkiConnect card data
-//   けが    → card 1001, type 0 (unlearned)
-//   アニメ  → card 1002, type 1 (learning)
-//   日本語  → card 1003, type 2 (learned)
-// ---------------------------------------------------------------------------
-const MOCK_CARDS = {
-  'けが':   { id: 1001, type: 0 },
-  'アニメ': { id: 1002, type: 1 },
-  '日本語': { id: 1003, type: 2 },
-};
-
-// ---------------------------------------------------------------------------
-// Mock AnkiConnect HTTP server
-// ---------------------------------------------------------------------------
-
-function createMockAnkiServer() {
-  return http.createServer((req, res) => {
-    // Handle CORS preflight
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
-    req.on('end', () => {
-      let payload;
-      try {
-        payload = JSON.parse(body);
-      } catch {
-        res.writeHead(400);
-        res.end(JSON.stringify({ result: null, error: 'bad json' }));
-        return;
-      }
-
-      let result = null;
-
-      if (payload.action === 'multi') {
-        result = payload.params.actions.map((action) => {
-          if (action.action === 'findCards') {
-            // Query is like: Expression:"けが"
-            const match = action.params.query.match(/"([^"]+)"/);
-            const word = match ? match[1] : '';
-            const card = MOCK_CARDS[word];
-            return card ? [card.id] : [];
-          }
-          return [];
-        });
-      } else if (payload.action === 'cardsInfo') {
-        const idToCard = Object.fromEntries(
-          Object.values(MOCK_CARDS).map((c) => [c.id, c])
-        );
-        result = payload.params.cards
-          .filter((id) => idToCard[id])
-          .map((id) => ({ cardId: id, type: idToCard[id].type }));
-      }
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ result, error: null }));
-    });
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Test HTML page
@@ -112,32 +46,24 @@ const TEST_PAGE_HTML = `<!DOCTYPE html>
 </html>`;
 
 // ---------------------------------------------------------------------------
-// Fixtures: shared browser context with extension + mock server
+// Fixtures: shared browser context with extension loaded
 // ---------------------------------------------------------------------------
 
-let mockServer;
 let browserContext;
 
 test.beforeAll(async () => {
-  // Start mock AnkiConnect on port 8765
-  mockServer = createMockAnkiServer();
-  await new Promise((resolve) => mockServer.listen(ANKI_PORT, '127.0.0.1', resolve));
-
-  // Launch Chrome with the extension loaded
   browserContext = await chromium.launchPersistentContext('', {
     headless: false,
     args: [
       `--disable-extensions-except=${EXTENSION_PATH}`,
       `--load-extension=${EXTENSION_PATH}`,
     ],
-    // Suppress "Chrome is being controlled by automated software" banner
     ignoreDefaultArgs: ['--enable-automation'],
   });
 });
 
 test.afterAll(async () => {
   await browserContext?.close();
-  await new Promise((resolve) => mockServer?.close(resolve));
 });
 
 // Helper: open the test page and wait for the content script to annotate it

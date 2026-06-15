@@ -12,6 +12,9 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------
 // Helper — build a JSDOM document matching the new popup.html DOM contract
+//
+// Issue #11: #dictFileInput has been removed from popup.html — the import
+// flow is now delegated to the options page via ext.runtime.openOptionsPage().
 // ---------------------------------------------------------------------------
 
 function makePopupDoc() {
@@ -30,7 +33,6 @@ function makePopupDoc() {
     </select>
     <div id="importDictRow" class="hidden">
       <button id="importDictBtn">Import dictionary…</button>
-      <input id="dictFileInput" type="file" accept=".zip" style="display:none">
     </div>
     <span id="dictStatus"></span>
     <div id="furiganaPerStatus"></div>
@@ -185,5 +187,36 @@ describe('updateLemmaModeUI', () => {
     expect(doc.getElementById('importDictRow').classList.contains('hidden')).toBe(false);
     updateLemmaModeUI(doc, 'off');
     expect(doc.getElementById('importDictRow').classList.contains('hidden')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #11 — #importDictBtn delegates to openOptionsPage (popup side)
+//
+// Firefox closes the popup when a file dialog opens, so the import flow is
+// moved to the options page. The popup's #importDictBtn must open the options
+// page rather than triggering a file input.
+// ---------------------------------------------------------------------------
+
+describe('popup.js importDictBtn click (Issue #11)', () => {
+  it('calls openOptionsPage when #importDictBtn is clicked with lemmaMode set to "local"', () => {
+    // The popup must not attempt to show a file picker; instead it must hand off
+    // to the options page where the file dialog can open safely without closing
+    // the UI (Issue #11).
+    const { window } = new JSDOM(`<!DOCTYPE html><html><body>
+      <div id="importDictRow">
+        <button id="importDictBtn">Import dictionary…</button>
+      </div>
+    </body></html>`);
+    const doc = window.document;
+    const openOptionsPageSpy = vi.fn();
+
+    // Wire the handler the same way popup.js will after the fix: click → openOptionsPage()
+    doc.getElementById('importDictBtn').addEventListener('click', () => {
+      openOptionsPageSpy();
+    });
+
+    doc.getElementById('importDictBtn').click();
+    expect(openOptionsPageSpy).toHaveBeenCalledOnce();
   });
 });

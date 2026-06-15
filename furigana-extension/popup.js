@@ -1,6 +1,5 @@
-import { resolveLemmaMode, validateDictFiles } from './lemma-util.js';
-import { saveDictionary, hasDictionary } from './dict-store.js';
-import { ZipReader, BlobReader, BlobWriter } from '@zip.js/zip.js';
+import { resolveLemmaMode } from './lemma-util.js';
+import { hasDictionary } from './dict-store.js';
 
 const ext = (typeof browser !== 'undefined' ? browser : (typeof chrome !== 'undefined' ? chrome : null));
 
@@ -99,43 +98,6 @@ function updatePerStatusState(doc, enabled) {
   doc.getElementById('furiganaPerStatus').classList.toggle('disabled', !enabled);
 }
 
-/**
- * Extracts dictionary files from a zip and stores them, validating completeness first.
- *
- * @param {Document} doc - The popup document.
- * @param {File} file - The user-selected zip archive.
- */
-async function onImportDict(doc, file) {
-  const status = doc.getElementById('dictStatus');
-  if (status) status.textContent = 'Importing…';
-  try {
-    const reader = new ZipReader(new BlobReader(file));
-    const entries = await reader.getEntries();
-    const fileEntries = entries.filter((e) => !e.directory);
-    const names = fileEntries.map((e) => e.filename.split('/').pop());
-
-    const { ok, missing } = validateDictFiles(names);
-    if (!ok) {
-      await reader.close();
-      if (status) status.textContent = `Missing: ${missing.join(', ')}`;
-      return;
-    }
-
-    const fileMap = new Map();
-    for (const entry of fileEntries) {
-      const name = entry.filename.split('/').pop();
-      const blob = await entry.getData(new BlobWriter());
-      fileMap.set(name, blob);
-    }
-    await reader.close();
-
-    await saveDictionary(fileMap);
-    await refreshDictStatus(doc);
-  } catch (e) {
-    if (status) status.textContent = 'Import failed';
-  }
-}
-
 if (ext) {
   /** Shorthand for `document.getElementById`. */
   const $ = (id) => document.getElementById(id);
@@ -145,6 +107,7 @@ if (ext) {
 
   /** Persists the current form state to `ext.storage.local`. */
   const saveSettings = () => ext.storage.local.set(currentSettings(document));
+
 
   /**
    * Displays a status message in the popup footer bar.
@@ -205,11 +168,7 @@ if (ext) {
     await refreshDictStatus(document);
   });
 
-  $('importDictBtn').addEventListener('click', () => $('dictFileInput').click());
-  $('dictFileInput').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) onImportDict(document, file);
-  });
+  $('importDictBtn').addEventListener('click', () => ext.runtime.openOptionsPage());
 
   $('scanBtn').addEventListener('click', async () => {
     await saveSettings();
