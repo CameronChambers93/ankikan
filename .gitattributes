@@ -1,0 +1,3 @@
+# Keep the pnpm lockfile LF on all platforms so worktrees on Windows don't
+# show it as spuriously modified after checkout.
+pnpm-lock.yaml text eol=lf

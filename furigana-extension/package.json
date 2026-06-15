@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "AnkiKan browser extension",
   "type": "module",
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build": "node build.js",
     "dev": "web-ext run --source-dir .",
