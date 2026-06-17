@@ -1,7 +1,7 @@
-import { STYLE_DEFAULTS, resolveStyleSettings } from './style-util.js';
+import { STYLE_DEFAULTS, resolveStyleSettings } from '../shared/style-util.js';
 import { ZipReader, BlobReader, BlobWriter } from '@zip.js/zip.js';
-import { saveDictionary, hasDictionary } from './dict-store.js';
-import { validateDictFiles } from './lemma-util.js';
+import { saveDictionary, hasDictionary } from '../shared/dict-store.js';
+import { validateDictFiles } from '../shared/lemma-util.js';
 
 /**
  * Reads stored style settings via `storageGet` and populates all inputs in `doc`.

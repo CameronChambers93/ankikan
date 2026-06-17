@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.8.26",
-    "dexie": "^4.4.3"
+    "dexie": "^4.4.3",
+    "zlibjs": "^0.3.1"
   }
 }

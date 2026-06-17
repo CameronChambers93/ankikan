@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { STYLE_DEFAULTS } from './style-util.js';
+import { STYLE_DEFAULTS } from '../shared/style-util.js';
 
 // options.js does not exist yet — dynamic imports below will throw until it is created.
 // Using dynamic import inside each test means individual tests fail with a meaningful
@@ -430,7 +430,7 @@ describe('onImportDict (Issue #11)', () => {
   it('sets #dictStatus to "Loaded" when zip contains all required files and save succeeds', async () => {
     // A fully valid zip archive must result in a visible "Loaded" status so the
     // user has confirmation that the dictionary was imported successfully.
-    vi.mock('./dict-store.js', () => ({
+    vi.mock('../shared/dict-store.js', () => ({
       saveDictionary: vi.fn().mockResolvedValue(undefined),
       hasDictionary: vi.fn().mockResolvedValue(true),
     }));
@@ -467,7 +467,7 @@ describe('onImportDict (Issue #11)', () => {
     // An incomplete archive must be rejected before writing to IndexedDB; the
     // status must name the specific missing file so the user can diagnose the problem.
     const saveDictionaryMock = vi.fn().mockResolvedValue(undefined);
-    vi.mock('./dict-store.js', () => ({
+    vi.mock('../shared/dict-store.js', () => ({
       saveDictionary: saveDictionaryMock,
       hasDictionary: vi.fn().mockResolvedValue(false),
     }));
@@ -505,7 +505,7 @@ describe('onImportDict (Issue #11)', () => {
   it('sets #dictStatus to "Import failed" when ZipReader throws', async () => {
     // A corrupt or unreadable archive must not crash the options page; instead
     // the failure must be surfaced as a human-readable status message.
-    vi.mock('./dict-store.js', () => ({
+    vi.mock('../shared/dict-store.js', () => ({
       saveDictionary: vi.fn(),
       hasDictionary: vi.fn().mockResolvedValue(false),
     }));
@@ -529,7 +529,7 @@ describe('onImportDict (Issue #11)', () => {
   it('does not throw when #dictStatus element is absent from the document', async () => {
     // The function must be safe to call even if the element is missing so that
     // partial renders or programmatic calls from other contexts do not crash.
-    vi.mock('./dict-store.js', () => ({
+    vi.mock('../shared/dict-store.js', () => ({
       saveDictionary: vi.fn().mockResolvedValue(undefined),
       hasDictionary: vi.fn().mockResolvedValue(false),
     }));
@@ -566,7 +566,7 @@ describe('refreshDictStatus (Issue #11)', () => {
   it('sets #dictStatus.textContent to "Loaded" when hasDictionary resolves true', async () => {
     // A loaded dictionary must be visible to the user on the options page so they
     // know the import was successful and the local tokenizer is ready to use.
-    vi.mock('./dict-store.js', () => ({
+    vi.mock('../shared/dict-store.js', () => ({
       saveDictionary: vi.fn(),
       hasDictionary: vi.fn().mockResolvedValue(true),
     }));
@@ -580,7 +580,7 @@ describe('refreshDictStatus (Issue #11)', () => {
   it('sets #dictStatus.textContent to "Not loaded" when hasDictionary resolves false', async () => {
     // An absent dictionary must be indicated clearly so the user knows they need
     // to import one before the local tokenizer can function.
-    vi.mock('./dict-store.js', () => ({
+    vi.mock('../shared/dict-store.js', () => ({
       saveDictionary: vi.fn(),
       hasDictionary: vi.fn().mockResolvedValue(false),
     }));
@@ -594,7 +594,7 @@ describe('refreshDictStatus (Issue #11)', () => {
   it('sets #dictStatus.textContent to "Not loaded" when hasDictionary rejects', async () => {
     // An IndexedDB error must not propagate to the caller; the status must fall
     // back to "Not loaded" so the UI remains usable even when storage is broken.
-    vi.mock('./dict-store.js', () => ({
+    vi.mock('../shared/dict-store.js', () => ({
       saveDictionary: vi.fn(),
       hasDictionary: vi.fn().mockRejectedValue(new Error('IDB unavailable')),
     }));

@@ -1,5 +1,5 @@
-import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet, injectStyles, resolveStyleSettings } from './style-util.js';
-import { resolveLemmaMode, filterLemmaMap } from './lemma-util.js';
+import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet, injectStyles, resolveStyleSettings } from '../shared/style-util.js';
+import { resolveLemmaMode, filterLemmaMap } from '../shared/lemma-util.js';
 import DynamicDictionaries from 'kuromoji/src/dict/DynamicDictionaries.js';
 import Tokenizer from 'kuromoji/src/Tokenizer.js';
 import { Zlib } from 'zlibjs/bin/gunzip.min.js';
