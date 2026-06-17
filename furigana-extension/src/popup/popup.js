@@ -1,5 +1,5 @@
-import { resolveLemmaMode } from './lemma-util.js';
-import { hasDictionary } from './dict-store.js';
+import { resolveLemmaMode } from '../shared/lemma-util.js';
+import { hasDictionary } from '../shared/dict-store.js';
 
 const ext = (typeof browser !== 'undefined' ? browser : (typeof chrome !== 'undefined' ? chrome : null));
 

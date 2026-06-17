@@ -6,8 +6,8 @@ import {
   buildStyleSheet,
   injectStyles,
   resolveStyleSettings,
-} from './style-util.js';
-import { resetToDefaults } from './popup-style.js';
+} from '../shared/style-util.js';
+import { resetToDefaults } from '../shared/popup-style.js';
 
 // ---------------------------------------------------------------------------
 // AC6 — injectStyles() creates/replaces a dynamic <style> element
@@ -186,7 +186,7 @@ describe('popup HTML style section (AC1)', () => {
     const fs = await import('fs');
     const path = await import('path');
     // After extraction the style section lives in options.html, not popup.html.
-    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'options.html');
+    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', '..', '..', 'options.html');
     const html = fs.readFileSync(htmlPath, 'utf8');
     doc = new JSDOM(html, { url: 'http://localhost/' }).window.document;
   });
@@ -242,7 +242,7 @@ describe('popup HTML after extraction (issue #6)', () => {
   beforeEach(async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'popup.html');
+    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', '..', '..', 'popup.html');
     const html = fs.readFileSync(htmlPath, 'utf8');
     // Pass a URL so JSDOM does not treat the document as an opaque origin,
     // which would cause localStorage errors when the module script tag is parsed.
@@ -280,7 +280,7 @@ describe('manifest.json options_ui (issue #6)', () => {
   beforeEach(async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const manifestPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'manifest.json');
+    const manifestPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', '..', '..', 'manifest.json');
     manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   });
 

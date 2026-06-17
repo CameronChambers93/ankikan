@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet } from './style-util.js';
+import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet } from '../shared/style-util.js';
 
 // ---------------------------------------------------------------------------
 // hexToRgb
