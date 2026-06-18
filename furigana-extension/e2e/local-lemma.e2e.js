@@ -435,6 +435,13 @@ test('local mode resolves inflected form 伝え to lemma 伝える and applies a
   // and annotate the span with the correct status class.
   // The mock only has a card for 伝える (type 0 = unlearned), not for 伝え directly,
   // so a raw surface lookup would yield nothing — only the lemma path succeeds.
+  //
+  // 伝え in isolation is ambiguous: kuromoji's Viterbi path resolves the bare word to
+  // the NOUN 伝え (basic_form === surface, no lemma). It only resolves to the verb
+  // 伝える (連用形) given sentence context. Since groupCandidates builds the block text
+  // by joining the <span> surfaces within a block (content.grouping.js), the surrounding
+  // 彼に…ました context words are wrapped in their own spans so kuromoji sees 彼に伝えました
+  // and tags 伝え as 動詞・連用形 → basic_form 伝える.
   const popup = await openPopup();
   await clearStorage(popup);
 
@@ -452,7 +459,7 @@ test('local mode resolves inflected form 伝え to lemma 伝える and applies a
   const fullHtml = `<!DOCTYPE html>
 <html lang="ja">
 <head><meta charset="utf-8"><title>AnkiKan Local Lemma E2E</title></head>
-<body><span id="inflected">伝え</span></body>
+<body><p><span>彼</span><span>に</span><span id="inflected">伝え</span><span>ました</span></p></body>
 </html>`;
   await page.route('http://test-lemma.local/inflected', (route) =>
     route.fulfill({ contentType: 'text/html', body: fullHtml }),
