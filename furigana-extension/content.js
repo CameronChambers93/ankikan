@@ -1,5 +1,6 @@
 import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet, injectStyles, resolveStyleSettings } from './style-util.js';
 import { resolveLemmaMode, filterLemmaMap } from './lemma-util.js';
+import { segmentAndWrap } from './content.segmentation.js';
 import DynamicDictionaries from 'kuromoji/src/dict/DynamicDictionaries.js';
 import Tokenizer from 'kuromoji/src/Tokenizer.js';
 import { Zlib } from 'zlibjs/bin/gunzip.min.js';
@@ -334,9 +335,17 @@ if (typeof chrome !== 'undefined' || typeof browser !== 'undefined') {
     }
   });
 
-  ext.storage.local.get(DEFAULTS).then((settings) => {
+  ext.storage.local.get(DEFAULTS).then(async (settings) => {
     if (!isAllowed(settings)) return;
     injectStyles(document, resolveStyleSettings(settings.styleSettings ?? null));
+
+    const mode = resolveLemmaMode(settings);
+    if (mode === 'local' && document.querySelector('span[data-lemma]') === null) {
+      if (!_tokenizerPromise) _tokenizerPromise = buildKuromoji();
+      const tok = await _tokenizerPromise;
+      if (tok) segmentAndWrap(document.body, isJapanese, tok.tokenize.bind(tok));
+    }
+
     scanPage(settings);
   });
 }
