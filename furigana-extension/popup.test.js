@@ -34,6 +34,7 @@ function makePopupDoc() {
     <div id="importDictRow" class="hidden">
       <button id="importDictBtn">Import dictionary…</button>
     </div>
+    <div id="importRow" class="hidden"></div>
     <span id="dictStatus"></span>
     <div id="furiganaPerStatus"></div>
     <button id="openOptionsBtn"></button>
@@ -218,5 +219,161 @@ describe('popup.js importDictBtn click (Issue #11)', () => {
 
     doc.getElementById('importDictBtn').click();
     expect(openOptionsPageSpy).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #22 — #scanBtn click path  (AC-10 through AC-14)
+//
+// These tests load popup.js with a fake ext object set on globalThis so the
+// side-effectful if (ext) block runs with our spies instead of the real browser
+// API.  The developer must add 'popup.test.js' to the doMockPlugin condition
+// in vitest.config.js so that vi.mock() calls inside this file are hoisted
+// as vi.doMock() (matching the options.test.js pattern).
+// ---------------------------------------------------------------------------
+
+describe('#scanBtn click (Issue #22)', () => {
+  /**
+   * Build a fake ext object for the popup's scanBtn path.
+   * - storage.local.get resolves with settingsData (for loadSettings on boot)
+   * - storage.local.set resolves immediately (for saveSettings)
+   * - tabs.query resolves with [{ id: 99 }] (the active tab)
+   * - tabs.sendMessage resolves with the value provided by sendMessageResult
+   * - runtime.openOptionsPage is a no-op spy
+   * - storage.onChanged is falsy so the onChanged listener branch is skipped
+   */
+  function makeFakeExt(sendMessageResult, settingsData = {}) {
+    return {
+      storage: {
+        local: {
+          get: vi.fn().mockResolvedValue(settingsData),
+          set: vi.fn().mockResolvedValue(undefined),
+        },
+        onChanged: null,
+      },
+      tabs: {
+        query: vi.fn().mockResolvedValue([{ id: 99 }]),
+        sendMessage: vi.fn().mockResolvedValue(sendMessageResult),
+      },
+      runtime: {
+        openOptionsPage: vi.fn(),
+      },
+    };
+  }
+
+  /**
+   * Load popup.js with the given fake ext injected on globalThis.chrome,
+   * using a freshly-built JSDOM document as the global document.
+   * Returns { doc, ext } so tests can inspect both.
+   *
+   * NOTE: popup.js reads `ext` at module evaluation time, so we must set
+   * globalThis.chrome before the dynamic import and reset it after to avoid
+   * cross-test pollution.
+   */
+  async function loadPopupWithFakeExt(fakeExt, settingsData = {}) {
+    const doc = makePopupDoc();
+    // Provide hasDictionary mock so popup.js's refreshDictStatus does not throw
+    vi.doMock('./dict-store.js', () => ({
+      hasDictionary: vi.fn().mockResolvedValue(false),
+      saveDictionary: vi.fn().mockResolvedValue(undefined),
+    }));
+    // popup.js resolves ext = chrome at module load; inject before import
+    globalThis.chrome = fakeExt;
+    globalThis.document = doc;
+    await import('./popup.js');
+    // Give the loadSettings() call in the if (ext) block time to settle
+    await Promise.resolve();
+    return { doc };
+  }
+
+  it('T-22-036: saves settings and sends { action: "scan" } to the active tab when #scanBtn is clicked (AC-10)', async () => {
+    // The scan button must persist current settings before dispatching so the
+    // content script always runs with up-to-date user preferences.
+    const fakeExt = makeFakeExt({ found: 0, matched: 0 });
+    const { doc } = await loadPopupWithFakeExt(fakeExt);
+
+    doc.getElementById('scanBtn').click();
+    // Allow the async click handler to progress past saveSettings
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fakeExt.storage.local.set).toHaveBeenCalled();
+    expect(fakeExt.tabs.sendMessage).toHaveBeenCalledWith(99, { action: 'scan' });
+  });
+
+  it('T-22-037: disables #scanBtn while sendMessage is pending and re-enables after it resolves (AC-11)', async () => {
+    // The button must be disabled for the duration of the scan to prevent the
+    // user from triggering a second concurrent scan, and re-enabled afterwards.
+    let resolveSend;
+    const pendingResult = new Promise((r) => { resolveSend = r; });
+    const fakeExt = makeFakeExt(undefined);
+    fakeExt.tabs.sendMessage = vi.fn().mockReturnValue(pendingResult);
+
+    const { doc } = await loadPopupWithFakeExt(fakeExt);
+    const btn = doc.getElementById('scanBtn');
+
+    doc.getElementById('scanBtn').click();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(btn.disabled).toBe(true);
+
+    resolveSend({ found: 1, matched: 1 });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(btn.disabled).toBe(false);
+  });
+
+  it('T-22-038: status shows "Scanning…" in-flight then the matched/found string after success (AC-12)', async () => {
+    // The user must see immediate feedback when scanning starts, then a
+    // meaningful result summary so they know how many words were matched.
+    let resolveSend;
+    const pendingResult = new Promise((r) => { resolveSend = r; });
+    const fakeExt = makeFakeExt(undefined);
+    fakeExt.tabs.sendMessage = vi.fn().mockReturnValue(pendingResult);
+
+    const { doc } = await loadPopupWithFakeExt(fakeExt);
+    const statusEl = doc.getElementById('status');
+
+    doc.getElementById('scanBtn').click();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(statusEl.textContent).toBe('Scanning…');
+
+    resolveSend({ found: 5, matched: 3 });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(statusEl.textContent).toBe('3 / 5 words matched');
+  });
+
+  it('T-22-039: status shows the connection-error string when result has error: "connection" (AC-13)', async () => {
+    // When Anki is not running, the error field must produce the specific
+    // human-readable message so the user knows to start Anki.
+    const fakeExt = makeFakeExt({ found: 2, matched: 0, error: 'connection' });
+    const { doc } = await loadPopupWithFakeExt(fakeExt);
+
+    doc.getElementById('scanBtn').click();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(doc.getElementById('status').textContent).toBe('Could not reach Anki. Is it running?');
+  });
+
+  it('T-22-040: status shows "Cannot run on this page." and has error class when sendMessage resolves null (AC-14)', async () => {
+    // sendMessage returning null means the content script is not injected on
+    // the active tab (e.g. a chrome:// page); the user must be told clearly.
+    const fakeExt = makeFakeExt(null);
+    const { doc } = await loadPopupWithFakeExt(fakeExt);
+
+    doc.getElementById('scanBtn').click();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const statusEl = doc.getElementById('status');
+    expect(statusEl.textContent).toBe('Cannot run on this page.');
+    expect(statusEl.className).toContain('error');
   });
 });
