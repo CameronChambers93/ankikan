@@ -17,6 +17,10 @@
  *   AC-8  — runtime segmentation fires before scanPage when lemmaMode=local + dict loaded
  *   AC-9  — pre-annotated NHK-style pages bypass segmentation; existing spans are highlighted
  *   AC-13 — lemmaMode=off (or no dict) suppresses segmentation; no anki-* classes produced
+ *
+ * Prerequisites:
+ *   Anki must be running with the AnkiConnect add-on active on localhost:8765.
+ *   Run `node e2e/setup-anki-e2e.js` to provision the required deck/cards if needed.
  */
 
 import { test, expect, chromium } from '@playwright/test';
@@ -28,109 +32,6 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, '..');
 const ANKI_PORT = 8765;
-
-// ---------------------------------------------------------------------------
-// Mock AnkiConnect card data for segmentation tests.
-//   日本語 → card 3001, type 2 (learned)  — present in raw-text page as a segmented token
-//   難しい → card 3002, type 0 (unlearned) — present in raw-text page as a segmented token
-//   伝える → card 3003, type 0 (unlearned) — used in pre-annotated NHK-style page test
-// ---------------------------------------------------------------------------
-const MOCK_SEG_CARDS = {
-  '日本語': { id: 3001, type: 2 },
-  '難しい': { id: 3002, type: 0 },
-  '伝える': { id: 3003, type: 0 },
-};
-
-// ---------------------------------------------------------------------------
-// Mock AnkiConnect HTTP server — mirrors local-lemma.e2e.js structure exactly.
-// ---------------------------------------------------------------------------
-
-function createMockAnkiServer() {
-  return http.createServer((req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
-    req.on('end', () => {
-      let payload;
-      try {
-        payload = JSON.parse(body);
-      } catch {
-        res.writeHead(400);
-        res.end(JSON.stringify({ result: null, error: 'bad json' }));
-        return;
-      }
-
-      let result = null;
-
-      if (payload.action === 'multi') {
-        result = payload.params.actions.map((action) => {
-          if (action.action === 'findCards') {
-            const match = action.params.query.match(/"([^"]+)"/);
-            const word = match ? match[1] : '';
-            const card = MOCK_SEG_CARDS[word];
-            return card ? [card.id] : [];
-          }
-          return [];
-        });
-      } else if (payload.action === 'cardsInfo') {
-        const idToCard = Object.fromEntries(
-          Object.values(MOCK_SEG_CARDS).map((c) => [c.id, c])
-        );
-        result = payload.params.cards
-          .filter((id) => idToCard[id])
-          .map((id) => ({ cardId: id, type: idToCard[id].type }));
-      }
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ result, error: null }));
-    });
-  });
-}
-
-/**
- * Attempts to start an HTTP server on the given port, retrying every 300 ms for up to
- * `maxWaitMs` milliseconds. Returns true if the server started successfully, false if
- * the port remained occupied for the whole retry window.
- *
- * Copied verbatim from local-lemma.e2e.js — workers:1 means a previous file's afterAll
- * may not have released the port before this file's beforeAll fires.
- */
-function listenWithRetry(server, port, host, maxWaitMs = 3000) {
-  return new Promise((resolve) => {
-    const deadline = Date.now() + maxWaitMs;
-
-    function attempt() {
-      const onError = (err) => {
-        server.removeListener('listening', onListen);
-        if (err.code === 'EADDRINUSE' && Date.now() < deadline) {
-          setTimeout(attempt, 300);
-        } else {
-          resolve(false);
-        }
-      };
-
-      const onListen = () => {
-        server.removeListener('error', onError);
-        resolve(true);
-      };
-
-      server.once('error', onError);
-      server.once('listening', onListen);
-      server.listen(port, host);
-    }
-
-    attempt();
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Read real kuromoji IPAdic dictionary files from node_modules for seeding.
@@ -152,16 +53,27 @@ const SERIALIZED_DICT_FILES = DICT_FILE_NAMES.map((name) => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Fixtures: shared browser context + mock server
+// Fixtures: shared browser context
 // ---------------------------------------------------------------------------
 
-let mockServer;
-let mockServerStarted = false;
 let browserContext;
 
 test.beforeAll(async () => {
-  mockServer = createMockAnkiServer();
-  mockServerStarted = await listenWithRetry(mockServer, ANKI_PORT, '127.0.0.1');
+  // Fail fast if AnkiConnect is not reachable — avoids a full Chromium launch
+  // only to have every test time out waiting for Anki card data.
+  await new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port: ANKI_PORT, method: 'POST', path: '/' },
+      (res) => { res.resume(); resolve(); }
+    );
+    req.on('error', () =>
+      reject(new Error(
+        `AnkiConnect unreachable on localhost:${ANKI_PORT}. ` +
+        'Start Anki with the AnkiConnect add-on before running segmentation E2E tests.'
+      ))
+    );
+    req.end(JSON.stringify({ action: 'version', version: 6 }));
+  });
 
   browserContext = await chromium.launchPersistentContext('', {
     headless: false,
@@ -179,9 +91,6 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await browserContext?.close();
-  if (mockServerStarted) {
-    await new Promise((resolve) => mockServer?.close(resolve));
-  }
 });
 
 // ---------------------------------------------------------------------------
@@ -308,8 +217,8 @@ async function clearDictInIndexedDB(page) {
 // With lemmaMode=local and the kuromoji dict seeded, the content script must:
 //   1. Detect there are no span[data-lemma] on the page (not pre-annotated).
 //   2. Call segmentAndWrap, which tokenizes the text and wraps words in <span>.
-//   3. Call scanPage, which finds those new spans and queries mock AnkiConnect.
-//   4. Apply an anki-* class to the word that has a card in the mock.
+//   3. Call scanPage, which finds those new spans and queries AnkiConnect.
+//   4. Apply an anki-* class to the word that has a card in Anki.
 //
 // This test FAILS (red) before the feature because segmentAndWrap does not exist yet,
 // so no spans are created and AnkiConnect is never queried for this page.
@@ -364,12 +273,12 @@ test('AC-7+AC-8: raw text-node Japanese page gets anki-* class after runtime seg
 
   // The paragraph must now contain at least one span with an anki-* status class.
   // This is only possible if segmentAndWrap ran (creating the spans) AND scanPage
-  // then found them and matched them against the mock AnkiConnect cards.
+  // then found them and matched them against AnkiConnect cards.
   await expect(
     page.locator('#raw-para [class*="anki-"]').first(),
   ).toBeVisible();
 
-  // Specifically: 日本語 is in the mock as type 2 (learned), so its span should carry
+  // Specifically: 日本語 is in Anki as type 2 (learned), so its span should carry
   // anki-learned (or whichever the pipeline assigns via cardTypeToStatus).
   await expect(
     page.locator('#raw-para span').filter({ hasText: '日本語' }),
@@ -401,7 +310,7 @@ test('AC-9: pre-annotated NHK-style page highlights existing spans without re-wr
   const page = await browserContext.newPage();
 
   // NHK-style pre-annotated page: each word is already in its own span with data-lemma.
-  // 伝える is in the mock as type 0 (unlearned).
+  // 伝える is in Anki as type 0 (unlearned).
   const nhkHtml = `<!DOCTYPE html>
 <html lang="ja">
 <head><meta charset="utf-8"><title>AnkiKan Segmentation E2E - NHK</title></head>
