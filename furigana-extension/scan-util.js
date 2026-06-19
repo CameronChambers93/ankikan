@@ -45,68 +45,51 @@ export function cardTypeToStatus(type) {
 }
 
 /**
- * Adds or removes the `anki-hide-furigana` class on a span based on per-status furigana settings.
- * If `furiganaGlobal` is false, furigana is always hidden regardless of status.
+ * Returns a boolean indicating whether furigana should be shown for a given
+ * status and settings combination.
  *
- * @param {HTMLSpanElement} span - The span whose furigana visibility to update.
- * @param {'anki-unlearned'|'anki-learning'|'anki-learned'} statusClass - The span's current Anki status.
- * @param {object} settings - Extension settings containing furigana visibility flags.
+ * @param {string} status - 'unlearned', 'learning', or 'learned'.
+ * @param {object} settings - Extension settings with furigana* flags.
+ * @returns {boolean}
  */
-export function applyFurigana(span, statusClass, settings) {
-  if (!settings.furiganaGlobal) {
-    span.classList.add('anki-hide-furigana');
-    return;
-  }
-  const show = {
-    'anki-unlearned': settings.furiganaUnlearned,
-    'anki-learning': settings.furiganaLearning,
-    'anki-learned': settings.furiganaLearned,
-  }[statusClass] ?? true;
-  span.classList.toggle('anki-hide-furigana', !show);
+export function furiganaVisible(status, settings) {
+  if (!settings.furiganaGlobal) return false;
+  const perStatus = {
+    unlearned: settings.furiganaUnlearned,
+    learning: settings.furiganaLearning,
+    learned: settings.furiganaLearned,
+  };
+  const flag = perStatus[status];
+  return flag !== false;
 }
 
 /**
- * Main scan routine: clears existing highlights, finds all Japanese `<span>` elements,
- * optionally resolves surface forms to lemmas, then queries AnkiConnect in two round trips
- * (findCards → cardsInfo) to classify each word and apply the appropriate status class.
- *
- * Round trip 1: `multi/findCards` — resolves each unique lookup word to a list of card IDs.
- * Round trip 2: `cardsInfo` — fetches the card type (new/learning/review) for all found cards.
- *
- * @param {object} settings - Extension settings (fieldName, useLemma, furigana flags, etc.).
- * @param {{ankiRequest: Function, fetchLemmas: Function, doc: Document}} opts - Injected dependencies.
- * @returns {Promise<{found: number, matched: number, error?: string}>} Scan result counts.
+ * Maps an 'anki-<status>' CSS class to the plain status string.
+ * Used for backward compatibility when callers still pass class names.
  */
-export async function scanPage(settings, { ankiRequest, fetchLemmas, doc = (typeof document !== 'undefined' ? document : null) } = {}) {
-  doc.querySelectorAll(STATUS_CLASSES.map((c) => '.' + c).join(','))
-    .forEach((el) => el.classList.remove(...ALL_CLASSES));
+function classToStatus(statusClass) {
+  return statusClass.replace('anki-', '');
+}
 
-  const allSpans = Array.from(doc.querySelectorAll('span'));
-  const candidates = allSpans
-    .map((span) => ({ span, word: extractWord(span) }))
-    .filter(({ word }) => isJapanese(word));
-
-  if (candidates.length === 0) {
+/**
+ * Main scan routine accepting a WordRecord[] instead of DOM spans.
+ * Queries AnkiConnect in two round trips (findCards → cardsInfo) and mutates
+ * each record's `status` and `duplicate` fields in place.
+ *
+ * @param {Array} records - WordRecord[] from collectWords / collectFromSpans.
+ * @param {object} settings - Extension settings.
+ * @param {{ ankiRequest: Function, fetchLemmas: Function }} opts - Injected dependencies.
+ * @returns {Promise<{found: number, matched: number, error?: string}>}
+ */
+export async function scanPage(records, settings, { ankiRequest, fetchLemmas } = {}) {
+  if (!records || records.length === 0) {
     return { found: 0, matched: 0 };
   }
 
-  // Build lemma map: surface → dictionary form.
-  // Priority: lemma server (live, context-aware) > data-lemma attribute (pre-annotated HTML).
-  const lemmaMap = {};
-  for (const { span, word } of candidates) {
-    if (span.dataset.lemma) lemmaMap[word] = span.dataset.lemma;
-  }
-  const mode = resolveLemmaMode(settings);
-  if (mode !== 'off') {
-    try {
-      Object.assign(lemmaMap, await fetchLemmas(candidates, mode));
-    } catch {
-      // Backend unavailable; fall back to data-lemma / surface form.
-    }
-  }
+  // Build lookup word per record (prefer lemma over surface).
+  const lookupWord = (rec) => rec.lemma || rec.surface;
 
-  const lookupWord = (word) => lemmaMap[word] || word;
-  const uniqueLookupWords = [...new Set(candidates.map(({ word }) => lookupWord(word)))];
+  const uniqueLookupWords = [...new Set(records.map(lookupWord))];
 
   // Round trip 1: findCards for all unique lookup words
   const multiBody = {
@@ -115,7 +98,7 @@ export async function scanPage(settings, { ankiRequest, fetchLemmas, doc = (type
     params: {
       actions: uniqueLookupWords.map((lw) => ({
         action: 'findCards',
-        params: { query: `${settings.fieldName}:"${lw}"` },
+        params: { query: `${settings.fieldName || 'Expression'}:"${lw}"` },
       })),
     },
   };
@@ -124,11 +107,11 @@ export async function scanPage(settings, { ankiRequest, fetchLemmas, doc = (type
   try {
     multiResponse = await ankiRequest(multiBody);
   } catch {
-    return { found: candidates.length, matched: 0, error: 'connection' };
+    return { found: records.length, matched: 0, error: 'connection' };
   }
 
   if (multiResponse.error || !Array.isArray(multiResponse.result)) {
-    return { found: candidates.length, matched: 0, error: multiResponse.error || 'unknown' };
+    return { found: records.length, matched: 0, error: multiResponse.error || 'unknown' };
   }
 
   const wordToCardIds = {};
@@ -140,7 +123,7 @@ export async function scanPage(settings, { ankiRequest, fetchLemmas, doc = (type
   const allCardIds = [...new Set(Object.values(wordToCardIds).flat())];
 
   if (allCardIds.length === 0) {
-    return { found: candidates.length, matched: 0 };
+    return { found: records.length, matched: 0 };
   }
 
   // Round trip 2: cardsInfo for all found card IDs
@@ -152,7 +135,7 @@ export async function scanPage(settings, { ankiRequest, fetchLemmas, doc = (type
       params: { cards: allCardIds },
     });
   } catch {
-    return { found: candidates.length, matched: 0, error: 'connection' };
+    return { found: records.length, matched: 0, error: 'connection' };
   }
 
   const cardIdToType = {};
@@ -163,16 +146,15 @@ export async function scanPage(settings, { ankiRequest, fetchLemmas, doc = (type
   }
 
   let matched = 0;
-  for (const { span, word } of candidates) {
-    const cardIds = wordToCardIds[lookupWord(word)];
+  for (const record of records) {
+    const cardIds = wordToCardIds[lookupWord(record)];
     if (!cardIds || cardIds.length === 0) continue;
 
     const statusClass = cardTypeToStatus(cardIdToType[cardIds[0]] ?? 0);
-    span.classList.add(statusClass);
-    if (cardIds.length > 1) span.classList.add('anki-duplicate');
-    applyFurigana(span, statusClass, settings);
+    record.status = classToStatus(statusClass);
+    record.duplicate = cardIds.length > 1;
     matched++;
   }
 
-  return { found: candidates.length, matched };
+  return { found: records.length, matched };
 }

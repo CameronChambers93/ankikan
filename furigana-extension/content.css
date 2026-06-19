@@ -1,12 +1,32 @@
-.anki-unlearned {
+#anki-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 2147483647;
+}
+
+.anki-overlay-rect {
+  position: absolute;
+}
+
+.anki-furigana {
+  position: absolute;
+  font-size: 0.6em;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+#anki-overlay .anki-unlearned {
   outline-offset: 1px;
 }
 
-.anki-learning {
+#anki-overlay .anki-learning {
   outline-offset: 1px;
 }
 
-.anki-learned {
+#anki-overlay .anki-learned {
   outline-offset: 1px;
 }
 

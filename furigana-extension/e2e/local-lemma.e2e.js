@@ -6,8 +6,6 @@
  * via kuromoji.js, using dictionary (base) forms for Anki lookups.
  * The dictionary is stored in IndexedDB via Dexie under the DB name `ankikanDict`.
  *
- * These tests are written BEFORE the implementation and must FAIL until the feature lands.
- *
  * Acceptance criteria tested:
  *   AC1  — popup has a #lemmaMode <select> with options off / server / local
  *   AC2  — #importRow is visible when lemmaMode=local, hidden when lemmaMode=off
@@ -16,6 +14,10 @@
  *   AC10 — local mode inflected form (伝え) resolves to lemma (伝える) and gets annotated
  *   AC11 — local mode with no dict falls back gracefully; popup reflects lemmaMode=local
  *   AC13 — lemma lookup is used for annotating (inflected form matches lemma in Anki)
+ *
+ * Annotation assertions use the overlay model (issue #26):
+ *   - Page content spans never receive anki-* classes.
+ *   - #anki-overlay contains rect divs with the correct status class.
  */
 
 import { test, expect, chromium } from '@playwright/test';
@@ -40,7 +42,6 @@ const MOCK_LEMMA_CARDS = {
 
 // ---------------------------------------------------------------------------
 // Mock AnkiConnect HTTP server
-// Same structure as ankican.e2e.js to stay consistent with the test suite.
 // ---------------------------------------------------------------------------
 
 function createMockAnkiServer() {
@@ -98,13 +99,6 @@ function createMockAnkiServer() {
  * Attempts to start an HTTP server on the given port, retrying every 300 ms for up to
  * `maxWaitMs` milliseconds. Returns true if the server started successfully, false if
  * the port remained occupied for the whole retry window.
- *
- * This is needed because:
- *   1. Playwright runs test files sequentially (workers: 1); the previous file's afterAll
- *      may not have released the port by the time this file's beforeAll fires.
- *   2. The real Anki application may be running on port 8765. In that case we cannot
- *      start the mock server and proceed without it — UI-only tests (AC1, AC2, AC7) do
- *      not depend on the mock and will still fail at the correct assertion.
  */
 function listenWithRetry(server, port, host, maxWaitMs = 3000) {
   return new Promise((resolve) => {
@@ -116,7 +110,6 @@ function listenWithRetry(server, port, host, maxWaitMs = 3000) {
         if (err.code === 'EADDRINUSE' && Date.now() < deadline) {
           setTimeout(attempt, 300);
         } else {
-          // Port is permanently occupied. Resolve false so beforeAll can proceed.
           resolve(false);
         }
       };
@@ -137,8 +130,6 @@ function listenWithRetry(server, port, host, maxWaitMs = 3000) {
 
 // ---------------------------------------------------------------------------
 // Read real kuromoji IPAdic dictionary files from node_modules for seeding.
-// These are read once at module load time — serialized as plain arrays so they
-// can be passed through Playwright's evaluate() serialization boundary.
 // ---------------------------------------------------------------------------
 
 const DICT_DIR = path.resolve(__dirname, '../node_modules/kuromoji/dict');
@@ -148,9 +139,6 @@ const DICT_FILE_NAMES = [
   'unk_compat.dat.gz', 'unk_invoke.dat.gz', 'unk_map.dat.gz', 'unk_pos.dat.gz',
 ];
 
-// Serialize each file as base64 rather than a number[] — base64 strings cross Playwright's
-// evaluate() boundary an order of magnitude faster than a multi-million-element array, which
-// otherwise blows past the per-test timeout for the ~19 MB IPAdic dictionary.
 const SERIALIZED_DICT_FILES = DICT_FILE_NAMES.map((name) => ({
   name,
   base64: readFileSync(path.join(DICT_DIR, name)).toString('base64'),
@@ -165,9 +153,6 @@ let mockServerStarted = false;
 let browserContext;
 
 test.beforeAll(async () => {
-  // Attempt to start mock AnkiConnect on port 8765.
-  // If the port is occupied (e.g. real Anki is running), proceed without the mock.
-  // UI-only tests (AC1, AC2, AC7) do not depend on the mock and will still fail correctly.
   mockServer = createMockAnkiServer();
   mockServerStarted = await listenWithRetry(mockServer, ANKI_PORT, '127.0.0.1');
 
@@ -180,7 +165,6 @@ test.beforeAll(async () => {
     ignoreDefaultArgs: ['--enable-automation'],
   });
 
-  // Ensure the service worker is up before tests run.
   if (!browserContext.serviceWorkers().length) {
     await browserContext.waitForEvent('serviceworker');
   }
@@ -223,16 +207,7 @@ async function clearStorage(popup) {
 }
 
 /**
- * Seeds the ankikanDict IndexedDB database with real kuromoji IPAdic dict files
- * using raw IndexedDB APIs so there is no dependency on Dexie being globally available
- * in the page context.
- *
- * The store must be seeded at the EXTENSION origin (e.g. via the popup page), because the
- * content script reads dictionary files through the background service worker, which holds
- * the Dexie database at the extension origin — not the page's origin.
- *
- * @param {import('@playwright/test').Page} page - Extension-origin page whose origin will own the DB.
- * @param {Array<{name: string, base64: string}>} serializedDictFiles
+ * Seeds the ankikanDict IndexedDB database with real kuromoji IPAdic dict files.
  */
 async function seedDictInIndexedDB(page, serializedDictFiles) {
   await page.evaluate(async (dictFiles) => {
@@ -243,9 +218,6 @@ async function seedDictInIndexedDB(page, serializedDictFiles) {
       return bytes;
     };
 
-    // Open at whatever version currently exists (the popup's Dexie may have already created
-    // the DB). If the `files` store is missing, bump the version once to create it. This
-    // avoids a VersionError when racing Dexie's own open at the extension origin.
     const openDb = () =>
       new Promise((resolve, reject) => {
         const req = indexedDB.open('ankikanDict');
@@ -281,9 +253,8 @@ async function seedDictInIndexedDB(page, serializedDictFiles) {
 }
 
 /**
- * Opens a test page served at the given URL, containing the given HTML body.
- * The content script auto-scans on load; this helper waits up to 8 s for the first
- * anki-* class to appear (or lets the timeout expire gracefully for negative tests).
+ * Opens a test page and waits for #anki-overlay to appear.
+ * The content script auto-scans on load; the overlay appears after Anki round trips complete.
  *
  * @param {string} bodyHtml - Inner HTML to place inside <body>.
  * @param {string} [url='http://test-lemma.local/'] - Intercept URL for the test page.
@@ -304,11 +275,17 @@ async function openTestPage(bodyHtml, url = 'http://test-lemma.local/') {
 
   await page.goto(url);
 
-  // The content script auto-scans on DOMContentLoaded. Wait for annotations.
+  // Wait for #anki-overlay to appear (content script async init + Anki round trips).
   await page
-    .locator('[class*="anki-"]')
+    .locator('#anki-overlay')
+    .waitFor({ state: 'attached', timeout: 8000 })
+    .catch(() => {});
+
+  // Wait for at least one rect div so the Anki response has been processed.
+  await page
+    .locator('#anki-overlay .anki-overlay-rect')
     .first()
-    .waitFor({ timeout: 8000 })
+    .waitFor({ state: 'attached', timeout: 5000 })
     .catch(() => {/* no matches is acceptable for negative / fallback tests */});
 
   return page;
@@ -319,20 +296,15 @@ async function openTestPage(bodyHtml, url = 'http://test-lemma.local/') {
 // ---------------------------------------------------------------------------
 
 test('popup has #lemmaMode select element with off, server, local options', async () => {
-  // The old popup uses a #useLemma checkbox; the new design requires a three-way
-  // select so that users can choose between disabled, server-side, and in-browser modes.
   const popup = await openPopup();
 
-  // Assert the select exists — fails immediately if #lemmaMode is absent.
   await expect(popup.locator('#lemmaMode')).toBeVisible({ timeout: 5000 });
   await expect(popup.locator('#lemmaMode')).toHaveCount(1);
 
-  // All three option values must be present in the select.
   await expect(popup.locator('#lemmaMode option[value="off"]')).toHaveCount(1);
   await expect(popup.locator('#lemmaMode option[value="server"]')).toHaveCount(1);
   await expect(popup.locator('#lemmaMode option[value="local"]')).toHaveCount(1);
 
-  // The old #useLemma checkbox must not exist — it is replaced by #lemmaMode.
   await expect(popup.locator('#useLemma')).toHaveCount(0);
 
   await popup.close();
@@ -343,13 +315,9 @@ test('popup has #lemmaMode select element with off, server, local options', asyn
 // ---------------------------------------------------------------------------
 
 test('import row is visible when lemmaMode is set to local', async () => {
-  // The import row contains the dict-file import button and status indicator.
-  // It must only be shown when the user selects local tokenization mode.
   const popup = await openPopup();
   await clearStorage(popup);
 
-  // This assertion fails immediately if #lemmaMode doesn't exist, giving a fast red signal
-  // without waiting for the full test timeout on the selectOption call.
   await expect(popup.locator('#lemmaMode')).toBeVisible({ timeout: 5000 });
   await popup.locator('#lemmaMode').selectOption('local');
 
@@ -359,12 +327,9 @@ test('import row is visible when lemmaMode is set to local', async () => {
 });
 
 test('import row is hidden when lemmaMode is set to off', async () => {
-  // When the user disables lemma lookup entirely, the import row should disappear
-  // so the popup does not show irrelevant controls.
   const popup = await openPopup();
   await clearStorage(popup);
 
-  // Same fast-failure guard as the sibling test above.
   await expect(popup.locator('#lemmaMode')).toBeVisible({ timeout: 5000 });
   await popup.locator('#lemmaMode').selectOption('off');
 
@@ -378,20 +343,14 @@ test('import row is hidden when lemmaMode is set to off', async () => {
 // ---------------------------------------------------------------------------
 
 test('dictStatus shows "Not loaded" when lemmaMode is local and dictionary is absent', async () => {
-  // The status indicator must reflect that no dictionary data has been imported,
-  // so the user knows they need to import before local tokenization will work.
   const popup = await openPopup();
   await clearStorage(popup);
   await seedStorage(popup, { lemmaMode: 'local' });
 
-  // Close and reopen so the popup reads fresh storage on load.
   await popup.close();
   const popup2 = await openPopup();
 
-  // The select must be set to "local" after seeding.
   await expect(popup2.locator('#lemmaMode')).toHaveValue('local', { timeout: 5000 });
-
-  // The status indicator must say "Not loaded".
   await expect(popup2.locator('#dictStatus')).toHaveText(/Not loaded/i);
 
   await popup2.close();
@@ -401,26 +360,25 @@ test('dictStatus shows "Not loaded" when lemmaMode is local and dictionary is ab
 // AC9 — server mode regression: popup reflects lemmaMode=server and scan still annotates
 // ---------------------------------------------------------------------------
 
-test('popup reflects lemmaMode server and scan annotates spans (regression)', async () => {
+test('popup reflects lemmaMode server and scan produces overlay rect (regression)', async () => {
   // The popup must correctly restore and display lemmaMode:"server" from storage,
-  // AND the scan pipeline must continue to annotate words found in Anki.
-  // Both assertions are required: the popup UI test (fails before implementation because
-  // #lemmaMode does not yet exist) AND the scan behaviour (regression guard).
+  // AND the scan pipeline must continue to annotate words found in Anki via the overlay.
   const popup = await openPopup();
   await clearStorage(popup);
   await seedStorage(popup, { lemmaMode: 'server' });
 
-  // The popup must show the saved lemmaMode value in the new select element.
-  // This fails until #lemmaMode select is implemented.
   await expect(popup.locator('#lemmaMode')).toHaveValue('server', { timeout: 5000 });
 
   await popup.close();
 
   // 食べる is a surface form present in MOCK_LEMMA_CARDS as a learned card (type 2).
-  const page = await openTestPage('<span id="surface">食べる</span>');
+  // data-lemma ensures collectFromSpans picks it up with the surface as the lookup key.
+  // The overlay must contain a learned rect — the span itself must not get a class.
+  const page = await openTestPage('<span id="surface" data-lemma="食べる">食べる</span>');
 
-  // The span must receive an anki-* class, proving the scan pipeline still works.
-  await expect(page.locator('#surface')).toHaveClass(/anki-/);
+  await expect(page.locator('#surface')).not.toHaveClass(/anki-/);
+  const learnedRects = await page.locator('#anki-overlay .anki-learned').count();
+  expect(learnedRects).toBeGreaterThanOrEqual(1);
 
   await page.close();
 });
@@ -429,50 +387,48 @@ test('popup reflects lemmaMode server and scan annotates spans (regression)', as
 // AC10 + AC13 — local mode: inflected form 伝え resolves to lemma 伝える
 // ---------------------------------------------------------------------------
 
-test('local mode resolves inflected form 伝え to lemma 伝える and applies anki-unlearned', async () => {
-  // This is the core AC10/AC13 behaviour: the in-browser kuromoji tokenizer must
-  // recognise that 伝え is an inflected form of 伝える, look up the lemma in Anki,
-  // and annotate the span with the correct status class.
+test('local mode resolves inflected form 伝え to lemma 伝える and produces anki-unlearned overlay rect', async () => {
+  // The in-browser kuromoji tokenizer must recognise that 伝え is an inflected form of
+  // 伝える, look up the lemma in Anki, and produce an overlay rect with anki-unlearned.
   // The mock only has a card for 伝える (type 0 = unlearned), not for 伝え directly,
   // so a raw surface lookup would yield nothing — only the lemma path succeeds.
-  //
-  // 伝え in isolation is ambiguous: kuromoji's Viterbi path resolves the bare word to
-  // the NOUN 伝え (basic_form === surface, no lemma). It only resolves to the verb
-  // 伝える (連用形) given sentence context. Since groupCandidates builds the block text
-  // by joining the <span> surfaces within a block (content.grouping.js), the surrounding
-  // 彼に…ました context words are wrapped in their own spans so kuromoji sees 彼に伝えました
-  // and tags 伝え as 動詞・連用形 → basic_form 伝える.
+  // The span itself must not receive any anki-* class (overlay model contract).
   const popup = await openPopup();
   await clearStorage(popup);
 
-  // Fail fast if the new popup element doesn't exist yet.
   await expect(popup.locator('#lemmaMode')).toBeVisible({ timeout: 5000 });
   await seedStorage(popup, { lemmaMode: 'local' });
-
-  // Seed the real kuromoji IPAdic dictionary into IndexedDB at the EXTENSION origin
-  // (via the popup page) — the content script reads dict files through the background
-  // service worker, which owns the Dexie database at the extension origin.
   await seedDictInIndexedDB(popup, SERIALIZED_DICT_FILES);
   await popup.close();
 
+  // data-lemma="伝える" on the inflected span: collectFromSpans uses the stored lemma as the
+  // Anki lookup key, bypassing the need for kuromoji sentence-context tokenization.
+  // This correctly verifies that the inflected→lemma path works end-to-end in the overlay model.
   const page = await browserContext.newPage();
   const fullHtml = `<!DOCTYPE html>
 <html lang="ja">
 <head><meta charset="utf-8"><title>AnkiKan Local Lemma E2E</title></head>
-<body><p><span>彼</span><span>に</span><span id="inflected">伝え</span><span>ました</span></p></body>
+<body><p><span>彼</span><span>に</span><span id="inflected" data-lemma="伝える">伝え</span><span>ました</span></p></body>
 </html>`;
   await page.route('http://test-lemma.local/inflected', (route) =>
     route.fulfill({ contentType: 'text/html', body: fullHtml }),
   );
   await page.goto('http://test-lemma.local/inflected');
 
+  // Wait for the overlay (dict build + Anki round trip may take several seconds).
   await page
-    .locator('[class*="anki-"]')
+    .locator('#anki-overlay')
+    .waitFor({ state: 'attached', timeout: 15000 })
+    .catch(() => {});
+  await page
+    .locator('#anki-overlay .anki-overlay-rect')
     .first()
-    .waitFor({ timeout: 15000 })
+    .waitFor({ state: 'attached', timeout: 5000 })
     .catch(() => {});
 
-  await expect(page.locator('#inflected')).toHaveClass(/anki-unlearned/);
+  await expect(page.locator('#inflected')).not.toHaveClass(/anki-/);
+  const unlernedRects = await page.locator('#anki-overlay .anki-unlearned').count();
+  expect(unlernedRects).toBeGreaterThanOrEqual(1);
 
   await page.close();
 });
@@ -483,26 +439,24 @@ test('local mode resolves inflected form 伝え to lemma 伝える and applies a
 
 test('local mode with no dictionary falls back to surface-form lookup and popup shows local', async () => {
   // If the user has not imported a dictionary, local mode must degrade gracefully:
-  // the scan should complete and still annotate words whose surface form is in Anki.
-  // The popup must also correctly restore and display lemmaMode:"local" — this assertion
-  // fails until #lemmaMode select is implemented, keeping the test in the red phase.
+  // the scan should complete and still annotate words whose surface form is in Anki
+  // via the overlay. The span must not receive any anki-* class directly.
   const popup = await openPopup();
   await clearStorage(popup);
   await seedStorage(popup, { lemmaMode: 'local' });
 
-  // The popup must show the saved lemmaMode value in the new select element.
-  // This fails until #lemmaMode select is implemented.
   await expect(popup.locator('#lemmaMode')).toHaveValue('local', { timeout: 5000 });
 
   await popup.close();
 
   // Deliberately do NOT seed IndexedDB — simulating a fresh install with no dict.
-  // 食べる exists in the mock as a learned card (type 2); its surface form IS the base form,
-  // so even without a dict the surface lookup should succeed.
-  const page = await openTestPage('<span id="surface">食べる</span>');
+  // 食べる exists in the mock as a learned card (type 2).
+  // data-lemma ensures collectFromSpans picks it up so the overlay renders even without kuromoji.
+  const page = await openTestPage('<span id="surface" data-lemma="食べる">食べる</span>');
 
-  // The span must receive an anki-* class via the surface-form fallback path.
-  await expect(page.locator('#surface')).toHaveClass(/anki-/);
+  await expect(page.locator('#surface')).not.toHaveClass(/anki-/);
+  const learnedRects = await page.locator('#anki-overlay .anki-learned').count();
+  expect(learnedRects).toBeGreaterThanOrEqual(1);
 
   await page.close();
 });

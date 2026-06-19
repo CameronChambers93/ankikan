@@ -153,12 +153,16 @@ describe('resolveCategory', () => {
 
 // ---------------------------------------------------------------------------
 // buildStyleSheet
+// Issue #26: selectors change from `.anki-${cat}` to `#anki-overlay .anki-${cat}`.
+// Substring assertions for `.anki-unlearned` etc. still pass because the scoped
+// selector still contains that substring.  Only the strict "exactly three bare
+// class selectors" assertion (T-038 / old T-38) is updated to expect the scoped form.
 // ---------------------------------------------------------------------------
 
 describe('buildStyleSheet', () => {
   it('returns a string containing a rule for .anki-unlearned', () => {
-    // The stylesheet must include all three status classes so the DOM classes
-    // added by scanPage() are actually styled (acceptance criterion 7).
+    // The stylesheet must include all three status classes so the overlay class
+    // names added by renderOverlay() are actually styled (acceptance criterion 7).
     const css = buildStyleSheet({});
     expect(typeof css).toBe('string');
     expect(css).toContain('.anki-unlearned');
@@ -235,14 +239,20 @@ describe('buildStyleSheet', () => {
     expect(css).toMatch(/border-radius:\s*6px/);
   });
 
-  it('does not contain any class selectors other than the three status classes', () => {
-    // The stylesheet must be scoped to exactly the three status selectors so
-    // it cannot accidentally style unrelated page elements
-    // (acceptance criterion 7).
+  it('T-038: selectors are scoped as #anki-overlay .anki-<status> (AC-12)', () => {
+    // Issue #26 moves highlights into a #anki-overlay div; the stylesheet rules
+    // must be scoped under that id so they only apply inside the overlay and
+    // cannot accidentally style page elements that happen to carry anki-* classes.
+    // Old assertion (T-038): exactly three bare `.anki-*` selectors.
+    // New assertion: exactly three `#anki-overlay .anki-*` selectors.
     const css = buildStyleSheet({});
-    const classMatches = css.match(/\.[a-z-]+\s*\{/g) || [];
-    const selectors = classMatches.map((m) => m.replace(/\s*\{/, '').trim());
-    expect(selectors.sort()).toEqual(['.anki-learned', '.anki-learning', '.anki-unlearned']);
+    const scopedMatches = css.match(/#anki-overlay\s+\.anki-[a-z]+\s*\{/g) || [];
+    const selectors = scopedMatches.map((m) => m.replace(/\s*\{/, '').trim());
+    expect(selectors.sort()).toEqual([
+      '#anki-overlay .anki-learned',
+      '#anki-overlay .anki-learning',
+      '#anki-overlay .anki-unlearned',
+    ]);
   });
 
   it('produces rgba() expressions that embed the opacity value', () => {

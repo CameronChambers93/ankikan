@@ -119,6 +119,6 @@ export function buildStyleSheet(styleSettings) {
     const ol = hexToRgb(s.outlineColor);
     const bgColor = bg ? `rgba(${bg.r}, ${bg.g}, ${bg.b}, ${s.backgroundOpacity})` : 'transparent';
     const olColor = ol ? `rgba(${ol.r}, ${ol.g}, ${ol.b}, ${s.outlineOpacity})` : 'transparent';
-    return `.anki-${cat} { background-color: ${bgColor}; border-radius: ${s.borderRadius}px; outline: ${s.outlineWidth}px solid ${olColor}; }`;
+    return `#anki-overlay .anki-${cat} { background-color: ${bgColor}; border-radius: ${s.borderRadius}px; outline: ${s.outlineWidth}px solid ${olColor}; }`;
   }).join('\n');
 }

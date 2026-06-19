@@ -1,11 +1,12 @@
 import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet, injectStyles, resolveStyleSettings } from './style-util.js';
 import { resolveLemmaMode, filterLemmaMap } from './lemma-util.js';
-import { segmentAndWrap } from './content.segmentation.js';
 import DynamicDictionaries from 'kuromoji/src/dict/DynamicDictionaries.js';
 import Tokenizer from 'kuromoji/src/Tokenizer.js';
 import { Zlib } from 'zlibjs/bin/gunzip.min.js';
 import { groupCandidates } from './content.grouping.js';
-import { isJapanese, extractWord, cardTypeToStatus, applyFurigana, scanPage, STATUS_CLASSES, ALL_CLASSES } from './scan-util.js';
+import { isJapanese, extractWord, cardTypeToStatus, furiganaVisible, scanPage, STATUS_CLASSES, ALL_CLASSES } from './scan-util.js';
+import { collectWords, collectFromSpans } from './word-collect.js';
+import { renderOverlay, clearOverlay, reposition, attachRepositionListeners } from './overlay-render.js';
 
 const ext = typeof browser !== 'undefined' ? browser : (typeof chrome !== 'undefined' ? chrome : null);
 
@@ -24,10 +25,6 @@ const DEFAULTS = {
 
 /**
  * Returns true if the current page should be scanned based on the allow/block URL lists.
- * Block list is checked first; an empty allow list means all non-blocked pages are allowed.
- * `file:` protocol pages are always allowed once the block check passes.
- *
- * @param {object} settings - Extension settings containing `allowedUrls` and `blockedUrls` arrays.
  */
 function isAllowed(settings) {
   const host = location.hostname;
@@ -46,75 +43,39 @@ function isAllowed(settings) {
 
 /**
  * Sends an AnkiConnect JSON-RPC request through the background service worker.
- * Returns the parsed response object from AnkiConnect.
- *
- * @param {object} body - A valid AnkiConnect request body (must include `action` and `version`).
  */
 async function ankiRequest(body) {
   return ext.runtime.sendMessage({ action: 'ankiQuery', body });
 }
 
 /**
- * Dispatches lemma resolution to the configured backend.
- *
- * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
- * @param {'server'|'local'} mode - The resolved lemma mode.
- * @returns {Promise<Object.<string, string>>} Map of `{surface: lemma}`.
+ * Fetches lemmas from the configured backend. In local mode this is a no-op
+ * because collectWords already extracts lemmas from kuromoji tokens directly.
  */
 async function fetchLemmas(candidates, mode) {
   if (mode === 'server') return fetchLemmasFromServer(candidates);
-  if (mode === 'local') return tokenizeLocally(candidates);
   return {};
 }
 
 /**
- * Queries the local lemma server (port 7654) via the background service worker.
- * Groups spans by block ancestor so the tokenizer receives full sentence context.
- *
- * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
- * @returns {Promise<Object.<string, string>>} Map of `{surface: lemma}`.
+ * Queries the local lemma server via the background service worker.
  */
 async function fetchLemmasFromServer(candidates) {
   const paragraphs = groupCandidates(candidates, extractWord);
   if (!paragraphs.length) return {};
-
   return ext.runtime.sendMessage({ action: 'lemmaQuery', body: { paragraphs } });
 }
 
 let _tokenizerPromise = null;
 
 /**
- * Tokenizes each block's text in-browser with kuromoji and derives surface→lemma mappings.
- *
- * @param {{span: HTMLSpanElement, word: string}[]} candidates - Japanese spans with extracted text.
- * @returns {Promise<Object.<string, string>>} Map of `{surface: lemma}`.
- */
-async function tokenizeLocally(candidates) {
-  if (!_tokenizerPromise) _tokenizerPromise = buildKuromoji();
-  const tokenizer = await _tokenizerPromise;
-  if (!tokenizer) return {};
-
-  const lemmaMap = {};
-  for (const { text, surfaces } of groupCandidates(candidates, extractWord)) {
-    const tokens = tokenizer.tokenize(text);
-    Object.assign(lemmaMap, filterLemmaMap(tokens, new Set(surfaces)));
-  }
-  return lemmaMap;
-}
-
-/**
- * Builds a kuromoji tokenizer whose gzipped dictionary files are fetched from the
- * extension-origin IndexedDB via the background service worker (`getDictFile`) and gunzipped
- * in-page. Resolves to null on failure (e.g. no dictionary imported).
- *
- * @returns {Promise<object|null>} The kuromoji tokenizer, or null if the dictionary is absent.
+ * Builds a kuromoji tokenizer using dictionary files from IndexedDB.
  */
 async function buildKuromoji() {
   const fetchFile = (name) =>
     ext.runtime.sendMessage({ action: 'getDictFile', name })
       .then((b64) => {
         if (!b64) throw new Error('dict file not found: ' + name);
-        // Background base64-encodes ArrayBuffers to survive Chrome message serialisation.
         const binary = atob(b64);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -140,38 +101,69 @@ async function buildKuromoji() {
 }
 
 if (typeof chrome !== 'undefined' || typeof browser !== 'undefined') {
+  // Module-level state shared across message handlers.
+  let _records = [];
+  let _cleanup = null;
+  let _settings = { ...DEFAULTS };
+
+  function doAttach(settings) {
+    if (_cleanup) _cleanup();
+    _cleanup = attachRepositionListeners(document, () => {
+      reposition(document, _records, settings);
+    });
+  }
+
+  async function collect(settings) {
+    const mode = resolveLemmaMode(settings);
+    const hasAnnotatedSpans = document.querySelector('span[data-lemma]') !== null;
+
+    if (mode === 'local' && !hasAnnotatedSpans) {
+      if (!_tokenizerPromise) _tokenizerPromise = buildKuromoji();
+      const tok = await _tokenizerPromise;
+      if (tok) {
+        return collectWords(document.body, { isJapanese, tokenize: tok.tokenize.bind(tok) });
+      }
+      return [];
+    }
+
+    return collectFromSpans(document.body);
+  }
+
   ext.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'scan') {
-      return ext.storage.local.get(DEFAULTS).then((settings) => scanPage(settings, { ankiRequest, fetchLemmas }));
+      return ext.storage.local.get(DEFAULTS).then(async (settings) => {
+        _settings = settings;
+        if (_cleanup) _cleanup();
+        clearOverlay(document);
+        _records = await collect(settings);
+        await scanPage(_records, settings, { ankiRequest, fetchLemmas: (cands, mode) => fetchLemmas(cands, mode) });
+        renderOverlay(document, _records, settings);
+        doAttach(settings);
+        return { ok: true };
+      });
     }
+
     if (msg.action === 'refreshFurigana') {
-      const settings = msg.settings;
-      document.querySelectorAll(STATUS_CLASSES.map((c) => '.' + c).join(','))
-        .forEach((span) => {
-          span.classList.remove('anki-hide-furigana');
-          const status = STATUS_CLASSES.find((c) => span.classList.contains(c));
-          if (status) applyFurigana(span, status, settings);
-        });
+      const settings = { ..._settings, ...msg.settings };
+      renderOverlay(document, _records, settings);
       return Promise.resolve({ ok: true });
     }
+
     if (msg.action === 'refreshStyles') {
       injectStyles(document, msg.styleSettings);
+      reposition(document, _records, _settings);
       return Promise.resolve({ ok: true });
     }
   });
 
   ext.storage.local.get(DEFAULTS).then(async (settings) => {
     if (!isAllowed(settings)) return;
+    _settings = settings;
     injectStyles(document, resolveStyleSettings(settings.styleSettings ?? null));
 
-    const mode = resolveLemmaMode(settings);
-    if (mode === 'local' && document.querySelector('span[data-lemma]') === null) {
-      if (!_tokenizerPromise) _tokenizerPromise = buildKuromoji();
-      const tok = await _tokenizerPromise;
-      if (tok) segmentAndWrap(document.body, isJapanese, tok.tokenize.bind(tok));
-    }
-
-    scanPage(settings, { ankiRequest, fetchLemmas });
+    _records = await collect(settings);
+    await scanPage(_records, settings, { ankiRequest, fetchLemmas: (cands, mode) => fetchLemmas(cands, mode) });
+    renderOverlay(document, _records, settings);
+    doAttach(settings);
   });
 }
-

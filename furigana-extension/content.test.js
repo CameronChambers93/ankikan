@@ -7,8 +7,17 @@
  * inline-mirrored tests; only the import source changes.
  *
  * AC-1: cardTypeToStatus maps Anki card type integers to CSS class names.
- * AC-2: applyFurigana toggles anki-hide-furigana based on settings flags.
- * AC-4–AC-9: scanPage is tested via its new injection-seam signature.
+ *
+ * Issue #26 changes:
+ * - T-22-005–T-22-008: rewritten from applyFurigana(span, statusClass, settings)
+ *   to furiganaVisible(status, settings) returning a boolean. The logical contract
+ *   is identical; only the interface changed (no DOM manipulation, pure boolean).
+ * - T-22-027–T-22-033: scanPage now accepts (records, settings, { ankiRequest,
+ *   fetchLemmas }) where records is WordRecord[]. Tests build real JSDOM text
+ *   nodes + Range objects and assert mutated record.status / record.duplicate
+ *   instead of span class lists. scanPage no longer accepts a `doc` parameter
+ *   for querying spans.
+ * - furiganaVisible AC-10–AC-11 tests added as T-26-056–T-26-061.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -17,7 +26,7 @@ import {
   isJapanese,
   extractWord,
   cardTypeToStatus,
-  applyFurigana,
+  furiganaVisible,
   scanPage,
   STATUS_CLASSES,
   ALL_CLASSES,
@@ -33,9 +42,26 @@ function makeSpan(innerHTML) {
   return dom.window.document.querySelector('span');
 }
 
-/** Build a minimal JSDOM document with one or more span elements. */
-function makeDoc(bodyHtml) {
-  return new JSDOM(`<!DOCTYPE html><body>${bodyHtml}</body>`).window.document;
+/**
+ * Build a WordRecord with a real JSDOM Range over a text node containing the
+ * given Japanese surface string.  The Range is live in the document.
+ */
+function makeRecord(surface, overrides = {}) {
+  const dom = new JSDOM(`<!DOCTYPE html><body><p>${surface}</p></body>`);
+  const doc = dom.window.document;
+  const textNode = doc.querySelector('p').firstChild;
+  const range = doc.createRange();
+  range.setStart(textNode, 0);
+  range.setEnd(textNode, surface.length);
+  return {
+    range,
+    surface,
+    lemma: null,
+    reading: null,
+    status: null,
+    duplicate: false,
+    ...overrides,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -70,60 +96,63 @@ describe('cardTypeToStatus', () => {
 });
 
 // ---------------------------------------------------------------------------
-// applyFurigana  (AC-2 — T-22-005, T-22-006, T-22-007, T-22-008)
+// furiganaVisible  (was applyFurigana — T-22-005–T-22-008, rewritten for #26)
+//
+// Old interface: applyFurigana(span, statusClass, settings) → void (DOM side-effect)
+// New interface: furiganaVisible(status, settings) → boolean (pure function)
+// The logical contract is the same — the old tests verified when the hide class
+// was added; these verify the same conditions produce false instead.
 // ---------------------------------------------------------------------------
 
-describe('applyFurigana', () => {
-  it('T-22-005: adds anki-hide-furigana when furiganaGlobal is false, regardless of status', () => {
-    // When the user disables furigana globally, every span must be hidden
-    // irrespective of its learning status.
-    const span = makeSpan('<ruby>日本<rt>にほん</rt></ruby>');
-    applyFurigana(span, 'anki-unlearned', {
+describe('furiganaVisible', () => {
+  it('T-22-005: returns false when furiganaGlobal is false, regardless of status', () => {
+    // When the user disables furigana globally, every word must be suppressed
+    // irrespective of its learning status — same contract as the old applyFurigana
+    // adding anki-hide-furigana unconditionally when furiganaGlobal is false.
+    expect(furiganaVisible('unlearned', {
       furiganaGlobal: false,
       furiganaUnlearned: true,
       furiganaLearning: true,
       furiganaLearned: true,
-    });
-    expect(span.classList.contains('anki-hide-furigana')).toBe(true);
+    })).toBe(false);
   });
 
-  it('T-22-006: adds anki-hide-furigana when furiganaGlobal is true but the per-status flag is false for the matching status', () => {
+  it('T-22-006: returns false when furiganaGlobal is true but the per-status flag is false for the matching status', () => {
     // The per-status override must be respected: a user who wants furigana
-    // globally but not on learned cards must see furigana hidden for learned spans.
-    const span = makeSpan('<ruby>食<rt>た</rt></ruby>べる');
-    applyFurigana(span, 'anki-learned', {
+    // globally but not on learned words must get false for status "learned".
+    // Mirrors old test: applyFurigana added anki-hide-furigana for anki-learned
+    // when furiganaLearned was false.
+    expect(furiganaVisible('learned', {
       furiganaGlobal: true,
       furiganaUnlearned: true,
       furiganaLearning: true,
       furiganaLearned: false,
-    });
-    expect(span.classList.contains('anki-hide-furigana')).toBe(true);
+    })).toBe(false);
   });
 
-  it('T-22-007: does not add anki-hide-furigana when furiganaGlobal is true and the per-status flag is true for the matching status', () => {
-    // When both the global flag and the per-status flag permit furigana,
-    // the hide class must be absent so the reading annotation is visible.
-    const span = makeSpan('<ruby>日本<rt>にほん</rt></ruby>');
-    applyFurigana(span, 'anki-unlearned', {
+  it('T-22-007: returns true when furiganaGlobal is true and the per-status flag is true for the matching status', () => {
+    // When both the global flag and the per-status flag permit furigana, the
+    // function must return true so the reading annotation is visible.
+    // Mirrors old test: anki-hide-furigana was absent when both flags were true.
+    expect(furiganaVisible('unlearned', {
       furiganaGlobal: true,
       furiganaUnlearned: true,
       furiganaLearning: true,
       furiganaLearned: false,
-    });
-    expect(span.classList.contains('anki-hide-furigana')).toBe(false);
+    })).toBe(true);
   });
 
-  it('T-22-008: adds anki-hide-furigana when furiganaLearning is false for an anki-learning span', () => {
-    // The furiganaLearning flag must be consulted when the span status is
-    // learning; the hide class must appear when the flag is false.
-    const span = makeSpan('アニメ');
-    applyFurigana(span, 'anki-learning', {
+  it('T-22-008: returns false when furiganaLearning is false for status "learning"', () => {
+    // The furiganaLearning flag must be consulted when status is "learning";
+    // false must produce false here.
+    // Mirrors old test: applyFurigana added anki-hide-furigana for anki-learning
+    // when furiganaLearning was false.
+    expect(furiganaVisible('learning', {
       furiganaGlobal: true,
       furiganaUnlearned: true,
       furiganaLearning: false,
       furiganaLearned: true,
-    });
-    expect(span.classList.contains('anki-hide-furigana')).toBe(true);
+    })).toBe(false);
   });
 });
 
@@ -224,10 +253,16 @@ describe('extractWord', () => {
 });
 
 // ---------------------------------------------------------------------------
-// scanPage  (AC-4–AC-9 — T-22-027 through T-22-033)
+// scanPage with WordRecord[]  (AC-8–AC-9 — T-22-027 through T-22-033, rewritten #26)
+//
+// Old interface: scanPage(settings, { ankiRequest, fetchLemmas, doc })
+//   — queried DOM for <span> elements, applied CSS classes to spans.
+// New interface: scanPage(records, settings, { ankiRequest, fetchLemmas })
+//   — accepts WordRecord[], mutates record.status and record.duplicate,
+//     does not touch the DOM directly.
 // ---------------------------------------------------------------------------
 
-describe('scanPage', () => {
+describe('scanPage (WordRecord interface)', () => {
   const baseSettings = {
     fieldName: 'Expression',
     furiganaGlobal: true,
@@ -238,41 +273,39 @@ describe('scanPage', () => {
     useLemma: false,
   };
 
-  it('T-22-027: returns { found: 0, matched: 0 } and never calls ankiRequest when there are no Japanese spans (AC-4)', async () => {
-    // A page with no Japanese content must short-circuit before making any
-    // network request; the counts must both be zero.
-    const doc = makeDoc('<span>hello</span><span>world</span>');
+  it('T-22-027: returns { found: 0, matched: 0 } and never calls ankiRequest when records is empty (AC-4)', async () => {
+    // An empty records array means no Japanese content was collected; the
+    // function must short-circuit with zero counts and no network call.
     const ankiRequest = vi.fn();
     const fetchLemmas = vi.fn().mockResolvedValue({});
 
-    const result = await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+    const result = await scanPage([], baseSettings, { ankiRequest, fetchLemmas });
 
     expect(result).toEqual({ found: 0, matched: 0 });
     expect(ankiRequest).not.toHaveBeenCalled();
   });
 
-  it('T-22-028: clears pre-existing status classes from spans before re-scanning (AC-5)', async () => {
-    // A second scan must start from a clean slate; stale classes from the
-    // previous scan must be removed so reclassified words display correctly.
-    const doc = makeDoc('<span class="anki-learned">日本語</span>');
-    const span = doc.querySelector('span');
-    // ankiRequest returns an empty multi result so no new class is applied
+  it('T-22-028: record.status remains null after scan when findCards returns empty (AC-5)', async () => {
+    // When no Anki cards are found for any record, status must remain null so
+    // the overlay does not colour words that have not been looked up.
+    const record = makeRecord('日本語');
     const ankiRequest = vi.fn().mockResolvedValue({ result: [[]], error: null });
     const fetchLemmas = vi.fn().mockResolvedValue({});
 
-    await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+    await scanPage([record], baseSettings, { ankiRequest, fetchLemmas });
 
-    expect(span.classList.contains('anki-learned')).toBe(false);
+    expect(record.status).toBeNull();
   });
 
-  it('T-22-029: sends a multi/findCards request whose actions list contains one entry per unique lookup word (AC-6)', async () => {
+  it('T-22-029: sends a multi/findCards request with one action per unique lookup word (AC-6)', async () => {
     // The first AnkiConnect round-trip must bundle all unique words into a
     // single multi request to minimise HTTP overhead.
-    const doc = makeDoc('<span>日本語</span><span>勉強</span>');
+    const rec1 = makeRecord('日本語');
+    const rec2 = makeRecord('勉強');
     const ankiRequest = vi.fn().mockResolvedValue({ result: [[], []], error: null });
     const fetchLemmas = vi.fn().mockResolvedValue({});
 
-    await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+    await scanPage([rec1, rec2], baseSettings, { ankiRequest, fetchLemmas });
 
     expect(ankiRequest).toHaveBeenCalled();
     const [firstCallBody] = ankiRequest.mock.calls[0];
@@ -282,11 +315,10 @@ describe('scanPage', () => {
     expect(firstCallBody.params.actions[1].action).toBe('findCards');
   });
 
-  it('T-22-030: applies the correct status class from cardsInfo and increments matched (AC-7)', async () => {
-    // A span whose findCards result contains a card id must receive the CSS
-    // class that corresponds to the card type returned by cardsInfo.
-    const doc = makeDoc('<span>日本語</span>');
-    const span = doc.querySelector('span');
+  it('T-22-030: sets record.status from cardsInfo and increments matched (AC-7)', async () => {
+    // A record whose findCards result contains a card id must have its status
+    // set to the value that corresponds to the card type from cardsInfo.
+    const record = makeRecord('日本語');
 
     // Round trip 1: findCards returns card id 42 for 日本語
     // Round trip 2: cardsInfo returns type 2 (learned) for card 42
@@ -295,34 +327,31 @@ describe('scanPage', () => {
       .mockResolvedValueOnce({ result: [{ cardId: 42, type: 2 }], error: null });
     const fetchLemmas = vi.fn().mockResolvedValue({});
 
-    const result = await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+    const result = await scanPage([record], baseSettings, { ankiRequest, fetchLemmas });
 
-    expect(span.classList.contains('anki-learned')).toBe(true);
+    expect(record.status).toBe('learned');
     expect(result.matched).toBe(1);
     expect(result.found).toBe(1);
   });
 
   it('T-22-031: resolves with error:"connection" and matched:0 when ankiRequest throws (AC-8)', async () => {
-    // A network failure (e.g. Anki not running) must not crash the extension;
-    // scanPage must resolve with an error field so the popup can display a
-    // helpful message rather than showing a rejected promise.
-    const doc = makeDoc('<span>日本語</span>');
+    // A network failure must not crash the extension; scanPage must resolve with
+    // an error field so the popup can display a helpful message.
+    const record = makeRecord('日本語');
     const ankiRequest = vi.fn().mockRejectedValue(new Error('fetch failed'));
     const fetchLemmas = vi.fn().mockResolvedValue({});
 
-    const result = await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+    const result = await scanPage([record], baseSettings, { ankiRequest, fetchLemmas });
 
     expect(result.error).toBe('connection');
     expect(result.matched).toBe(0);
     expect(result.found).toBeGreaterThanOrEqual(1);
   });
 
-  it('T-22-032: adds anki-duplicate when findCards returns more than one card id for a word (AC-9)', async () => {
-    // When multiple cards share the same expression field, the span must
-    // receive both a status class and anki-duplicate so the user can
-    // investigate the ambiguity.
-    const doc = makeDoc('<span>日本語</span>');
-    const span = doc.querySelector('span');
+  it('T-22-032: sets record.duplicate=true when findCards returns more than one card id (AC-9)', async () => {
+    // When multiple cards share the same expression field, the record must have
+    // duplicate=true so the overlay can display the anki-duplicate marker.
+    const record = makeRecord('日本語');
 
     // findCards returns two card ids → duplicate
     const ankiRequest = vi.fn()
@@ -330,29 +359,101 @@ describe('scanPage', () => {
       .mockResolvedValueOnce({ result: [{ cardId: 10, type: 0 }, { cardId: 11, type: 0 }], error: null });
     const fetchLemmas = vi.fn().mockResolvedValue({});
 
-    await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+    await scanPage([record], baseSettings, { ankiRequest, fetchLemmas });
 
-    expect(span.classList.contains('anki-duplicate')).toBe(true);
-    // Must also have a status class (the type of the first card id)
-    const hasStatus = STATUS_CLASSES.some((c) => span.classList.contains(c));
-    expect(hasStatus).toBe(true);
+    expect(record.duplicate).toBe(true);
+    // Must also have a status set
+    expect(record.status).not.toBeNull();
   });
 
-  it('T-22-033: returns { found: N, matched: 0 } and does not call cardsInfo when all findCards results are empty (edge case)', async () => {
+  it('T-22-033: returns { found: N, matched: 0 } and does not call cardsInfo when all findCards results are empty', async () => {
     // If no card ids are found for any word, matched must be 0 and found must
-    // reflect the number of Japanese spans; a second ankiRequest call for
-    // cardsInfo would be a wasted round-trip.
-    const doc = makeDoc('<span>日本語</span><span>勉強</span>');
+    // equal the number of records; a second ankiRequest call for cardsInfo
+    // would be a wasted round-trip.
+    const rec1 = makeRecord('日本語');
+    const rec2 = makeRecord('勉強');
     const ankiRequest = vi.fn()
       .mockResolvedValueOnce({ result: [[], []], error: null });
     const fetchLemmas = vi.fn().mockResolvedValue({});
 
-    const result = await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+    const result = await scanPage([rec1, rec2], baseSettings, { ankiRequest, fetchLemmas });
 
     expect(result.found).toBe(2);
     expect(result.matched).toBe(0);
     // cardsInfo must NOT be called when there are no card ids to look up
     expect(ankiRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// furiganaVisible — extended coverage (AC-10–AC-11 — T-26-056–T-26-063)
+// ---------------------------------------------------------------------------
+
+describe('furiganaVisible — extended (AC-10, AC-11)', () => {
+  it('T-26-056: returns false for status "learned" when furiganaLearned is false', () => {
+    // The learned per-status flag maps to the "learned" status string (not the
+    // CSS class name); it must be consulted when status === "learned".
+    expect(furiganaVisible('learned', {
+      furiganaGlobal: true,
+      furiganaUnlearned: true,
+      furiganaLearning: true,
+      furiganaLearned: false,
+    })).toBe(false);
+  });
+
+  it('T-26-057: returns true for status "learned" when furiganaLearned is true', () => {
+    // When a user explicitly enables furigana for learned cards the function
+    // must return true so the overlay renders the reading.
+    expect(furiganaVisible('learned', {
+      furiganaGlobal: true,
+      furiganaUnlearned: true,
+      furiganaLearning: true,
+      furiganaLearned: true,
+    })).toBe(true);
+  });
+
+  it('T-26-058: returns true for status "unlearned" when furiganaUnlearned is true', () => {
+    // The most common default: new words show furigana to help the user read them.
+    expect(furiganaVisible('unlearned', {
+      furiganaGlobal: true,
+      furiganaUnlearned: true,
+      furiganaLearning: false,
+      furiganaLearned: false,
+    })).toBe(true);
+  });
+
+  it('T-26-059: returns true for status "learning" when furiganaLearning is true', () => {
+    // Learning words showing furigana is the standard user configuration.
+    expect(furiganaVisible('learning', {
+      furiganaGlobal: true,
+      furiganaUnlearned: false,
+      furiganaLearning: true,
+      furiganaLearned: false,
+    })).toBe(true);
+  });
+
+  it('T-26-060: returns false for every status when furiganaGlobal is false', () => {
+    // The global flag is a master switch; it must override all per-status flags.
+    const settings = {
+      furiganaGlobal: false,
+      furiganaUnlearned: true,
+      furiganaLearning: true,
+      furiganaLearned: true,
+    };
+    expect(furiganaVisible('unlearned', settings)).toBe(false);
+    expect(furiganaVisible('learning', settings)).toBe(false);
+    expect(furiganaVisible('learned', settings)).toBe(false);
+  });
+
+  it('T-26-061: defaults to true for an unknown status when furiganaGlobal is true', () => {
+    // If the implementation cannot find a per-status flag for an unknown status
+    // value it must default to showing furigana rather than hiding it (fail open).
+    expect(furiganaVisible('unknown-status', {
+      furiganaGlobal: true,
+      furiganaUnlearned: true,
+      furiganaLearning: true,
+      furiganaLearned: true,
+    })).toBe(true);
   });
 });
 

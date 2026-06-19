@@ -6,25 +6,23 @@
  * previously untested — only the automatic on-load scan was exercised by existing
  * specs.
  *
- * AC-15 — Manual `scan` message on an already-loaded page re-annotates spans,
+ * AC-15 — Manual `scan` message on an already-loaded page rebuilds #anki-overlay,
  * distinct from the auto-scan.
  *
- * Test strategy:
- *   1. Load a page with a Japanese span (`けが`, mock returns card type 0 → anki-unlearned).
- *   2. Wait for the auto-scan to annotate it (proves the page is ready and content script
- *      is injected).
- *   3. Strip all `anki-*` classes from every span via page.evaluate.
- *   4. From an extension-origin popup page, send `{ action: 'scan' }` to the test tab via
+ * Test strategy (overlay model, issue #26):
+ *   1. Load a page with Japanese text (`けが`, mock returns card type 0 → anki-unlearned).
+ *   2. Wait for the auto-scan to create #anki-overlay with at least one anki-unlearned rect
+ *      (proves the page is ready and content script is injected).
+ *   3. Remove #anki-overlay from the DOM entirely via page.evaluate — clean baseline.
+ *   4. Confirm #anki-overlay is gone.
+ *   5. From an extension-origin popup page, send `{ action: 'scan' }` to the test tab via
  *      `chrome.tabs.sendMessage(tabId, { action: 'scan' })` — the same message the popup
- *      #scanBtn delivers. This is the manual path being exercised; the popup button click is
- *      not used directly because `chrome.tabs.query({ active: true, currentWindow: true })`
- *      returns the popup page itself once it is focused, not the test page. Sending the
- *      message from the popup-page JS context via a known tab ID is the faithful equivalent
- *      and exercises the same content-script handler.
- *   5. Assert that the span regains `anki-unlearned` — proving the MANUAL path ran.
+ *      #scanBtn delivers.
+ *   6. Assert that #anki-overlay is recreated with at least one anki-unlearned rect.
+ *   7. Assert that #target span never received an anki-* class (overlay model contract).
  *
  * A passing test can only be explained by the manual trigger working: if the scan
- * message were never delivered, the stripped classes would never return.
+ * message were never delivered, the removed overlay would never be recreated.
  */
 
 import { test, expect, chromium } from '@playwright/test';
@@ -102,7 +100,6 @@ function createMockAnkiServer() {
 /**
  * Attempts to start an HTTP server on the given port, retrying every 300 ms for up to
  * `maxWaitMs` milliseconds. Resolves true on success, false if the port stays occupied.
- * Needed because the previous test file's afterAll may not have released port 8765 yet.
  */
 function listenWithRetry(server, port, host, maxWaitMs = 3000) {
   return new Promise((resolve) => {
@@ -153,7 +150,6 @@ test.beforeAll(async () => {
     ignoreDefaultArgs: ['--enable-automation'],
   });
 
-  // Ensure the service worker is up before tests run.
   if (!browserContext.serviceWorkers().length) {
     await browserContext.waitForEvent('serviceworker');
   }
@@ -196,16 +192,17 @@ async function clearStorage(popup) {
 }
 
 // ---------------------------------------------------------------------------
-// AC-15 — Manual scan re-annotates spans after auto-scan classes are stripped
+// AC-15 — Manual scan rebuilds #anki-overlay after it is cleared
 // ---------------------------------------------------------------------------
 
-test('manual scan via chrome.tabs.sendMessage re-annotates spans after anki-* classes are cleared', async () => {
-  // AC-15: The manual scan path (content script `scan` message handler → scanPage) must
-  // independently annotate spans. We prove this by stripping auto-scan annotations first
-  // so a pass requires the manual path to run.
+test('manual scan via chrome.tabs.sendMessage rebuilds #anki-overlay after it is cleared; #target span never gets an anki-* class', async () => {
+  // AC-15 (overlay model): The manual scan path (content script `scan` message handler →
+  // scanPage → renderOverlay) must recreate #anki-overlay with the correct status rects.
+  // We prove this by removing the overlay from the DOM first so only the manual path
+  // can explain its reappearance.
   //
-  // The message is sent via chrome.tabs.sendMessage from the popup-page JS context —
-  // the same underlying call the popup #scanBtn makes — using the known test page tab ID.
+  // The #target span must never gain an anki-* class — this is the hard contract of the
+  // overlay model (issue #26): page content nodes are never mutated.
 
   // --- Seed storage so lemmaMode is off (surface-form lookup only) ---
   const seedPopup = await openPopup();
@@ -213,7 +210,7 @@ test('manual scan via chrome.tabs.sendMessage re-annotates spans after anki-* cl
   await seedStorage(seedPopup, { lemmaMode: 'off' });
   await seedPopup.close();
 
-  // --- Open the test page and wait for auto-scan to annotate ---
+  // --- Open the test page and wait for auto-scan to create the overlay ---
   const TEST_URL = 'http://test-manual-scan.local/';
   const TEST_HTML = `<!DOCTYPE html>
 <html lang="ja">
@@ -229,34 +226,33 @@ test('manual scan via chrome.tabs.sendMessage re-annotates spans after anki-* cl
   );
   await page.goto(TEST_URL);
 
-  // Wait for the auto-scan to annotate the span — this also confirms the content script
-  // is injected and the Anki mock is reachable before we proceed to the manual path.
-  await page.locator('#target[class*="anki-"]').waitFor({ timeout: 8000 });
+  // Wait for #anki-overlay to appear and contain at least one unlearned rect —
+  // this confirms the content script is injected and the Anki mock is reachable.
+  await page
+    .locator('#anki-overlay')
+    .waitFor({ state: 'attached', timeout: 10000 });
+  await page
+    .locator('#anki-overlay .anki-unlearned')
+    .first()
+    .waitFor({ state: 'attached', timeout: 5000 });
 
-  // Sanity check: auto-scan annotated correctly.
-  await expect(page.locator('#target')).toHaveClass(/anki-unlearned/);
-
-  // --- Strip all anki-* classes to create a clean baseline ---
-  // After this, only the manual scan can restore the classes.
-  await page.evaluate(() => {
-    document.querySelectorAll('[class*="anki-"]').forEach((el) => {
-      [...el.classList]
-        .filter((c) => c.startsWith('anki-'))
-        .forEach((c) => el.classList.remove(c));
-    });
-  });
-
-  // Confirm the strip succeeded — no anki-* class remains.
+  // Sanity check: the span itself must not carry any anki-* class.
   await expect(page.locator('#target')).not.toHaveClass(/anki-/);
 
+  // --- Remove #anki-overlay from the DOM to create a clean baseline ---
+  // After this, only the manual scan can restore the overlay.
+  await page.evaluate(() => {
+    const overlay = document.getElementById('anki-overlay');
+    if (overlay) overlay.remove();
+  });
+
+  // Confirm the overlay is gone.
+  await expect(page.locator('#anki-overlay')).not.toBeAttached();
+
   // --- Fire the manual scan from a popup-page extension context ---
-  // Open a popup page to get access to the extension's chrome.tabs API. We find the
-  // test tab by its URL, then call chrome.tabs.sendMessage — identical to what
-  // popup.js does when the user clicks #scanBtn.
   const popup = await openPopup();
 
   const result = await popup.evaluate(async (testUrl) => {
-    // Find the tab running the test page.
     const tabs = await chrome.tabs.query({ url: testUrl });
     if (!tabs.length) return { error: 'tab not found' };
     const tabId = tabs[0].id;
@@ -267,15 +263,20 @@ test('manual scan via chrome.tabs.sendMessage re-annotates spans after anki-* cl
     }
   }, TEST_URL);
 
-  // The scan handler in content.js returns { found, matched } — verify the round-trip
-  // succeeded and at least one span was found and matched.
+  // The scan handler in content.js returns { ok: true } — verify no error was returned.
   expect(result).not.toHaveProperty('error');
-  expect(result.found).toBeGreaterThanOrEqual(1);
-  expect(result.matched).toBeGreaterThanOrEqual(1);
 
-  // --- Assert that the manual scan restored the annotation ---
-  // The class can only be present again if the manual path ran scanPage() on the live DOM.
-  await expect(page.locator('#target')).toHaveClass(/anki-unlearned/);
+  // --- Assert that the manual scan rebuilt #anki-overlay with the correct rect ---
+  // The overlay can only reappear if the manual path ran renderOverlay() on the live DOM.
+  await page
+    .locator('#anki-overlay')
+    .waitFor({ state: 'attached', timeout: 5000 });
+
+  const unlernedRects = await page.locator('#anki-overlay .anki-unlearned').count();
+  expect(unlernedRects).toBeGreaterThanOrEqual(1);
+
+  // The span must still have no anki-* class — the overlay model never mutates page content.
+  await expect(page.locator('#target')).not.toHaveClass(/anki-/);
 
   await popup.close();
   await page.close();
