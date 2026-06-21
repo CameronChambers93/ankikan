@@ -135,6 +135,7 @@ textarea:focus {
 .dot.unlearned { background: rgba(220, 70, 70, 0.8); }
 .dot.learning  { background: rgba(210, 150, 20, 0.9); }
 .dot.learned   { background: rgba(50, 160, 70, 0.8); }
+.dot.unknown   { background: rgba(128, 128, 128, 0.8); }
 
 .legend {
   display: flex;
@@ -159,6 +160,7 @@ textarea:focus {
 .swatch.unlearned { background: rgba(220, 70, 70, 0.55); border: 1px solid rgba(220, 70, 70, 0.7); }
 .swatch.learning  { background: rgba(230, 170, 30, 0.55); border: 1px solid rgba(230, 170, 30, 0.7); }
 .swatch.learned   { background: rgba(50, 170, 80, 0.55); border: 1px solid rgba(50, 170, 80, 0.7); }
+.swatch.unknown   { background: rgba(128, 128, 128, 0.55); border: 1px solid rgba(128, 128, 128, 0.7); }
 
 .dup-mark {
   font-size: 10px;

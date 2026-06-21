@@ -21,7 +21,7 @@ export async function loadStyleSettings(doc, storageGet) {
   doc.getElementById('global-outline-opacity').value = styleSettings.default.outlineOpacity;
   doc.getElementById('global-outline-width').value   = styleSettings.default.outlineWidth;
 
-  for (const cat of ['unlearned', 'learning', 'learned']) {
+  for (const cat of ['unlearned', 'learning', 'learned', 'unknown']) {
     const overrides  = styleSettings[cat] ?? {};
     const hasColor   = 'backgroundColor' in overrides;
     doc.getElementById(`${cat}-bg-color-enabled`).checked  = hasColor;
@@ -60,6 +60,7 @@ export function currentStyleSettings(doc) {
     unlearned: catOverride('unlearned'),
     learning:  catOverride('learning'),
     learned:   catOverride('learned'),
+    unknown:   catOverride('unknown'),
   };
 }
 
@@ -93,7 +94,7 @@ export async function resetOptionsToDefaults(doc, storageSet, messageFn) {
   doc.getElementById('global-outline-opacity').value = defaults.default.outlineOpacity;
   doc.getElementById('global-outline-width').value   = defaults.default.outlineWidth;
 
-  for (const cat of ['unlearned', 'learning', 'learned']) {
+  for (const cat of ['unlearned', 'learning', 'learned', 'unknown']) {
     const enabledEl = doc.getElementById(`${cat}-bg-color-enabled`);
     const colorEl   = doc.getElementById(`${cat}-bg-color`);
     const opacityEl = doc.getElementById(`${cat}-bg-opacity`);
@@ -175,12 +176,12 @@ if (typeof document !== 'undefined' && ext) {
 
   const styleInputIds = [
     'global-bg-color', 'global-outline-color',
-    'unlearned-bg-color', 'learning-bg-color', 'learned-bg-color',
+    'unlearned-bg-color', 'learning-bg-color', 'learned-bg-color', 'unknown-bg-color',
   ];
   const numberInputIds = [
     'global-bg-opacity', 'global-border-radius',
     'global-outline-opacity', 'global-outline-width',
-    'unlearned-bg-opacity', 'learning-bg-opacity', 'learned-bg-opacity',
+    'unlearned-bg-opacity', 'learning-bg-opacity', 'learned-bg-opacity', 'unknown-bg-opacity',
   ];
 
   styleInputIds.forEach((id) => {
@@ -194,7 +195,7 @@ if (typeof document !== 'undefined' && ext) {
     );
   });
 
-  for (const cat of ['unlearned', 'learning', 'learned']) {
+  for (const cat of ['unlearned', 'learning', 'learned', 'unknown']) {
     document.getElementById(`${cat}-bg-color-enabled`)?.addEventListener('change', (e) => {
       document.getElementById(`${cat}-bg-color`).disabled = !e.target.checked;
       onStyleChange(document, storageSet, messageFn);
