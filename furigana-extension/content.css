@@ -10,6 +10,10 @@
   outline-offset: 1px;
 }
 
+.anki-unknown {
+  outline-offset: 1px;
+}
+
 .anki-duplicate::after {
   content: "✦";
   font-size: 0.5em;

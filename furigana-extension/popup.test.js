@@ -15,6 +15,7 @@ beforeEach(() => {
 //
 // Issue #11: #dictFileInput has been removed from popup.html — the import
 // flow is now delegated to the options page via ext.runtime.openOptionsPage().
+// Issue #33: #furiganaUnknown checkbox added inside #furiganaPerStatus.
 // ---------------------------------------------------------------------------
 
 function makePopupDoc() {
@@ -26,6 +27,9 @@ function makePopupDoc() {
     <input id="furiganaUnlearned" type="checkbox">
     <input id="furiganaLearning"  type="checkbox">
     <input id="furiganaLearned"   type="checkbox">
+    <div id="furiganaPerStatus">
+      <input id="furiganaUnknown" type="checkbox">
+    </div>
     <select id="lemmaMode">
       <option value="off">Off</option>
       <option value="server">Server</option>
@@ -36,7 +40,6 @@ function makePopupDoc() {
     </div>
     <div id="importRow" class="hidden"></div>
     <span id="dictStatus"></span>
-    <div id="furiganaPerStatus"></div>
     <button id="openOptionsBtn"></button>
     <button id="scanBtn"></button>
     <div id="status"></div>
@@ -143,6 +146,26 @@ describe('currentSettings', () => {
     const result = currentSettings(doc);
     expect(result).not.toHaveProperty('useLemma');
   });
+
+  it('T-33-026: currentSettings reflects furiganaUnknown:true when #furiganaUnknown is checked (issue #33 AC-31)', async () => {
+    // The furiganaUnknown value must be captured by currentSettings so it can
+    // be persisted to storage and sent to the content script on scan.
+    const { currentSettings } = await import('./popup.js');
+    const doc = makePopupDoc();
+    doc.getElementById('furiganaUnknown').checked = true;
+    const result = currentSettings(doc);
+    expect(result.furiganaUnknown).toBe(true);
+  });
+
+  it('T-33-027: currentSettings reflects furiganaUnknown:false when #furiganaUnknown is unchecked (issue #33 AC-32)', async () => {
+    // An unchecked furiganaUnknown checkbox must produce false in currentSettings
+    // so that applyFurigana hides furigana on unknown-status spans.
+    const { currentSettings } = await import('./popup.js');
+    const doc = makePopupDoc();
+    doc.getElementById('furiganaUnknown').checked = false;
+    const result = currentSettings(doc);
+    expect(result.furiganaUnknown).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -219,6 +242,61 @@ describe('popup.js importDictBtn click (Issue #11)', () => {
 
     doc.getElementById('importDictBtn').click();
     expect(openOptionsPageSpy).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #33 — popup.html structure for furiganaUnknown  (T-33-028)
+// ---------------------------------------------------------------------------
+
+describe('popup.html structure — furiganaUnknown (issue #33 AC-28)', () => {
+  let doc;
+
+  beforeEach(async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'popup.html');
+    const html = fs.readFileSync(htmlPath, 'utf8');
+    doc = new JSDOM(html, { url: 'http://localhost/' }).window.document;
+  });
+
+  it('T-33-028: popup.html contains #furiganaUnknown checkbox inside #furiganaPerStatus (issue #33 AC-28)', () => {
+    // The popup must expose the furiganaUnknown toggle so users can control
+    // whether furigana is shown on unknown-status spans from the popup UI.
+    const perStatus = doc.getElementById('furiganaPerStatus');
+    expect(perStatus, '#furiganaPerStatus must exist in popup.html').not.toBeNull();
+    const unknownCheckbox = doc.getElementById('furiganaUnknown');
+    expect(unknownCheckbox, '#furiganaUnknown must exist in popup.html').not.toBeNull();
+    expect(unknownCheckbox.type).toBe('checkbox');
+    expect(perStatus.contains(unknownCheckbox)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #33 — loadSettings populates furiganaUnknown  (T-33-029, T-33-030)
+// ---------------------------------------------------------------------------
+
+describe('loadSettings — furiganaUnknown (issue #33)', () => {
+  it('T-33-029: loadSettings with furiganaUnknown:false → #furiganaUnknown unchecked (issue #33 AC-29)', async () => {
+    // When storage has furiganaUnknown:false the checkbox must be unchecked so
+    // the UI correctly reflects the persisted preference on popup open.
+    const { loadSettings } = await import('./popup.js');
+    const doc = makePopupDoc();
+    const storage = makeFakeStorage({ furiganaUnknown: false });
+    await loadSettings(doc, storage.get);
+    expect(doc.getElementById('furiganaUnknown').checked).toBe(false);
+  });
+
+  it('T-33-030: loadSettings with default storage (no furiganaUnknown key) → #furiganaUnknown checked (issue #33 AC-30)', async () => {
+    // furiganaUnknown defaults to true (via ?? true fallback in DEFAULTS); a fresh
+    // install must show the checkbox checked so unknown words display furigana
+    // out of the box.
+    const { loadSettings } = await import('./popup.js');
+    const doc = makePopupDoc();
+    // Empty storage — DEFAULTS apply, furiganaUnknown should default to true
+    const storage = makeFakeStorage({});
+    await loadSettings(doc, storage.get);
+    expect(doc.getElementById('furiganaUnknown').checked).toBe(true);
   });
 });
 

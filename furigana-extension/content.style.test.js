@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet } from './style-util.js';
+import {
+  BUILT_IN_STYLE_FALLBACK,
+  STYLE_DEFAULTS,
+  hexToRgb,
+  resolveCategory,
+  buildStyleSheet,
+  resolveStyleSettings,
+} from './style-util.js';
 
 // ---------------------------------------------------------------------------
 // hexToRgb
@@ -149,6 +156,29 @@ describe('resolveCategory', () => {
     const settings = { default: { borderRadius: 3 }, unlearned: { borderRadius: 0 }, learning: {}, learned: {} };
     expect(resolveCategory(settings, 'unlearned').borderRadius).toBe(0);
   });
+
+  it('T-33-009: resolveCategory({}, "unknown") returns fallback props with no undefined fields (issue #33 AC-19)', () => {
+    // The unknown category must resolve to concrete style values just like the
+    // other three categories; undefined fields would crash buildStyleSheet.
+    const result = resolveCategory({}, 'unknown');
+    expect(result.backgroundColor).toBeDefined();
+    expect(result.backgroundOpacity).toBeDefined();
+    expect(result.borderRadius).toBeDefined();
+    expect(result.outlineColor).toBeDefined();
+    expect(result.outlineOpacity).toBeDefined();
+    expect(result.outlineWidth).toBeDefined();
+    expect(result.backgroundColor).not.toBeUndefined();
+  });
+
+  it('T-33-010: resolveCategory with default:#ff0000 and unknown:{} returns backgroundColor #ff0000 (issue #33 AC-20)', () => {
+    // When the unknown category has no override, the global default must
+    // propagate to it just as it does for the three existing categories.
+    const settings = {
+      default:   { backgroundColor: '#ff0000' },
+      unknown:   {},
+    };
+    expect(resolveCategory(settings, 'unknown').backgroundColor).toBe('#ff0000');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -157,7 +187,7 @@ describe('resolveCategory', () => {
 
 describe('buildStyleSheet', () => {
   it('returns a string containing a rule for .anki-unlearned', () => {
-    // The stylesheet must include all three status classes so the DOM classes
+    // The stylesheet must include all four status classes so the DOM classes
     // added by scanPage() are actually styled (acceptance criterion 7).
     const css = buildStyleSheet({});
     expect(typeof css).toBe('string');
@@ -176,6 +206,13 @@ describe('buildStyleSheet', () => {
     expect(css).toContain('.anki-learned');
   });
 
+  it('T-33-011: returns a string containing a rule for .anki-unknown (issue #33 AC-14)', () => {
+    // The new unknown status must be represented in the stylesheet so that
+    // spans with anki-unknown receive a visual highlight, not zero styling.
+    const css = buildStyleSheet({});
+    expect(css).toContain('.anki-unknown');
+  });
+
   it('produces built-in fallback colour for .anki-unlearned when no settings are provided', () => {
     // With no user customisation the generated CSS must embed the built-in
     // fallback colours so the page looks correct immediately after install
@@ -184,6 +221,30 @@ describe('buildStyleSheet', () => {
     // Built-in unlearned background is #dc4646 -> r=220, g=70, b=70
     expect(css).toContain('220');
     expect(css).toContain('70');
+  });
+
+  it('T-33-012: .anki-unknown uses fallback rgba(128, 128, 128, ...) when styleSettings is empty (issue #33 AC-15)', () => {
+    // The default unknown colour is grey (#808080 = rgb(128,128,128)); when no
+    // override is provided the stylesheet must embed these components.
+    const css = buildStyleSheet({});
+    const unknownBlock = css.slice(css.indexOf('.anki-unknown'));
+    expect(unknownBlock).toMatch(/rgba\(128,\s*128,\s*128,/);
+  });
+
+  it('T-33-013: .anki-unknown uses rgba(170, 187, 204, ...) when unknown.backgroundColor is #aabbcc (issue #33 AC-16)', () => {
+    // A per-category unknown override must be applied in the generated CSS,
+    // matching the same merge logic used by the other three categories.
+    const settings = {
+      default: {},
+      unlearned: {},
+      learning: {},
+      learned: {},
+      unknown: { backgroundColor: '#aabbcc' },
+    };
+    const css = buildStyleSheet(settings);
+    const unknownBlock = css.slice(css.indexOf('.anki-unknown'));
+    // #aabbcc → r=170, g=187, b=204
+    expect(unknownBlock).toMatch(/rgba\(170,\s*187,\s*204,/);
   });
 
   it('uses a global default background colour in all three class rules', () => {
@@ -235,14 +296,14 @@ describe('buildStyleSheet', () => {
     expect(css).toMatch(/border-radius:\s*6px/);
   });
 
-  it('does not contain any class selectors other than the three status classes', () => {
-    // The stylesheet must be scoped to exactly the three status selectors so
-    // it cannot accidentally style unrelated page elements
-    // (acceptance criterion 7).
+  it('T-33-014: selectors are exactly the four .anki-* status classes including .anki-unknown (issue #33 AC-17)', () => {
+    // Issue #33 adds anki-unknown as a fourth status; the stylesheet must
+    // contain rules for all four selectors and nothing else.
+    // CHANGED from legacy T-038: expected array now includes '.anki-unknown'.
     const css = buildStyleSheet({});
     const classMatches = css.match(/\.[a-z-]+\s*\{/g) || [];
     const selectors = classMatches.map((m) => m.replace(/\s*\{/, '').trim());
-    expect(selectors.sort()).toEqual(['.anki-learned', '.anki-learning', '.anki-unlearned']);
+    expect(selectors.sort()).toEqual(['.anki-learned', '.anki-learning', '.anki-unknown', '.anki-unlearned']);
   });
 
   it('produces rgba() expressions that embed the opacity value', () => {
@@ -251,5 +312,72 @@ describe('buildStyleSheet', () => {
     const settings = { default: { backgroundColor: '#ff0000', backgroundOpacity: 0.5 }, unlearned: {}, learning: {}, learned: {} };
     const css = buildStyleSheet(settings);
     expect(css).toMatch(/rgba\(255,\s*0,\s*0,\s*0\.5\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUILT_IN_STYLE_FALLBACK — issue #33 (T-33-015, T-33-016)
+// ---------------------------------------------------------------------------
+
+describe('BUILT_IN_STYLE_FALLBACK — unknown category (issue #33 AC-18)', () => {
+  it('T-33-015: BUILT_IN_STYLE_FALLBACK.unknown has backgroundColor "#808080"', () => {
+    // The canonical default colour for unknown words is grey so they stand out
+    // from unlabelled text without implying any learning progress.
+    expect(BUILT_IN_STYLE_FALLBACK.unknown).toBeDefined();
+    expect(BUILT_IN_STYLE_FALLBACK.unknown.backgroundColor).toBe('#808080');
+  });
+
+  it('T-33-016: BUILT_IN_STYLE_FALLBACK.unknown has the same six property keys as sibling categories', () => {
+    // The unknown entry must carry all six style fields (not just backgroundColor)
+    // so resolveCategory can merge it correctly without leaving any field undefined.
+    const sibling = BUILT_IN_STYLE_FALLBACK.unlearned;
+    const unknown = BUILT_IN_STYLE_FALLBACK.unknown;
+    expect(unknown).toBeDefined();
+    for (const key of Object.keys(sibling)) {
+      expect(unknown, `BUILT_IN_STYLE_FALLBACK.unknown must have key "${key}"`).toHaveProperty(key);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STYLE_DEFAULTS — issue #33 (T-33-017)
+// ---------------------------------------------------------------------------
+
+describe('STYLE_DEFAULTS — unknown category (issue #33 AC-12)', () => {
+  it('T-33-017: STYLE_DEFAULTS.styleSettings has an "unknown" key equal to {}', () => {
+    // The storage shape must include unknown so chrome.storage.local round-trips
+    // preserve the key; an absent key would cause resolveStyleSettings to never
+    // migrate legacy stored values.
+    expect(STYLE_DEFAULTS.styleSettings).toHaveProperty('unknown');
+    expect(STYLE_DEFAULTS.styleSettings.unknown).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveStyleSettings — issue #33 (T-33-018, T-33-019)
+// ---------------------------------------------------------------------------
+
+describe('resolveStyleSettings — unknown category (issue #33)', () => {
+  it('T-33-018: resolveStyleSettings(null) return value contains an "unknown" key (issue #33 AC-13)', () => {
+    // When storage is unavailable, the resolved settings must still include
+    // unknown so buildStyleSheet does not skip the .anki-unknown rule.
+    const result = resolveStyleSettings(null);
+    expect(result).toHaveProperty('unknown');
+  });
+
+  it('T-33-019: resolveStyleSettings with stored object lacking "unknown" returns unknown:{} (legacy migration, issue #33 AC-21)', () => {
+    // Stored settings saved before issue #33 will not have an "unknown" key;
+    // resolveStyleSettings must inject an empty object so callers always see
+    // all four category keys without crashing.
+    const stored = {
+      default: { backgroundColor: '#ff0000' },
+      unlearned: {},
+      learning: {},
+      learned: {},
+      // unknown intentionally absent — simulates pre-issue-33 storage
+    };
+    const result = resolveStyleSettings(stored);
+    expect(result).toHaveProperty('unknown');
+    expect(result.unknown).toEqual({});
   });
 });
