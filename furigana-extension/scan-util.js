@@ -1,4 +1,5 @@
 import { resolveLemmaMode } from './lemma-util.js';
+import { injectFurigana } from './content.segmentation.js';
 
 export const STATUS_CLASSES = ['anki-unlearned', 'anki-learning', 'anki-learned'];
 export const ALL_CLASSES = [...STATUS_CLASSES, 'anki-duplicate', 'anki-hide-furigana'];
@@ -140,6 +141,9 @@ export async function scanPage(settings, { ankiRequest, fetchLemmas, doc = (type
   const allCardIds = [...new Set(Object.values(wordToCardIds).flat())];
 
   if (allCardIds.length === 0) {
+    for (const { span } of candidates) {
+      injectFurigana(span);
+    }
     return { found: candidates.length, matched: 0 };
   }
 
@@ -172,6 +176,10 @@ export async function scanPage(settings, { ankiRequest, fetchLemmas, doc = (type
     if (cardIds.length > 1) span.classList.add('anki-duplicate');
     applyFurigana(span, statusClass, settings);
     matched++;
+  }
+
+  for (const { span } of candidates) {
+    injectFurigana(span);
   }
 
   return { found: candidates.length, matched };

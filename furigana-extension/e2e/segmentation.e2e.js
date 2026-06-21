@@ -17,10 +17,16 @@
  *   AC-8  — runtime segmentation fires before scanPage when lemmaMode=local + dict loaded
  *   AC-9  — pre-annotated NHK-style pages bypass segmentation; existing spans are highlighted
  *   AC-13 — lemmaMode=off (or no dict) suppresses segmentation; no anki-* classes produced
+ *   AC-19 — local-mode: unmatched plain kanji (食べる) gets <ruby>/<rt> injected; visible
+ *   AC-20 — local-mode: matched kanji (日本語, learned) with furiganaLearned:false gets
+ *            ruby injected but hidden via anki-hide-furigana
+ *   AC-21 — server mode / off mode: no extension-injected <ruby> elements appear
  *
  * Prerequisites:
  *   Anki must be running with the AnkiConnect add-on active on localhost:8765.
  *   Run `node e2e/setup-anki-e2e.js` to provision the required deck/cards if needed.
+ *   The AnkiKan-E2E deck must contain:
+ *     日本語 → type 2 (learned)
  */
 
 import { test, expect, chromium } from '@playwright/test';
@@ -461,6 +467,288 @@ test('graceful degradation: local mode with no dict seeded — no fatal JS error
   // No spans should have been injected (no dict → no segmentation → no lookups).
   const spanInsideParaCount = await page.locator('#raw-para-nodict span').count();
   expect(spanInsideParaCount).toBe(0);
+
+  await page.close();
+});
+
+// ---------------------------------------------------------------------------
+// AC-19 — Local mode: plain kanji with no pre-existing ruby gets furigana injected
+//
+// The page contains the raw text 食べる inside a <p> with no <ruby>/<rt>.
+// With lemmaMode=local and the kuromoji dict seeded, the full pipeline must:
+//   1. segmentAndWrap: tokenize 食べる → one span with data-reading set to the
+//      katakana reading returned by kuromoji.
+//   2. scanPage: query AnkiConnect (食べる is not in the AnkiKan-E2E deck, so it
+//      gets anki-unknown).
+//   3. injectFurigana: see that the span has dataset.reading and no pre-existing
+//      <ruby> child → build <ruby>食<rt>た</rt></ruby>べる and set it as innerHTML.
+//
+// The key assertions are that <ruby> and <rt> are NOW PRESENT in the DOM, and that
+// the <rt> text is non-empty hiragana (the reading). We do not assert anki-hide-
+// furigana because furiganaUnknown defaults to true (issue #33 AC behaviour).
+// ---------------------------------------------------------------------------
+
+test('AC-19: local mode — plain 食べる with no pre-existing ruby gets <ruby>/<rt> injected', async () => {
+  // Without furigana injection the user sees 食べる with no pronunciation aid.
+  // This is the core AC-19 behaviour: injectFurigana must synthesise <ruby><rt>
+  // from kuromoji's reading field for every span that lacks pre-existing ruby markup.
+  const popup = await openPopup();
+  await clearStorage(popup);
+  await seedStorage(popup, {
+    lemmaMode: 'local',
+    furiganaGlobal: true,
+    furiganaUnlearned: true,
+    furiganaLearning: true,
+    furiganaLearned: true,
+  });
+  await seedDictInIndexedDB(popup, SERIALIZED_DICT_FILES);
+  await popup.close();
+
+  const page = await browserContext.newPage();
+
+  // Plain HTML — 食べる sits in a raw text node inside <p>, NO <ruby> or <span> markup.
+  // This is the exact scenario described in the issue: arbitrary pages where the author
+  // has not added ruby annotations.
+  const rawHtml = `<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>AnkiKan Furigana Injection E2E</title></head>
+<body>
+  <p id="test-para">食べる</p>
+</body>
+</html>`;
+
+  await page.route('http://test-furigana-injection.local/', (route) =>
+    route.fulfill({ contentType: 'text/html', body: rawHtml }),
+  );
+  await page.goto('http://test-furigana-injection.local/');
+
+  // Wait up to 25 s for any anki-* class to appear — kuromoji dict init + segmentation
+  // + Anki round-trip can each take several seconds in CI.
+  await page
+    .locator('#test-para [class*="anki-"]')
+    .first()
+    .waitFor({ timeout: 25000 })
+    .catch(() => {/* assertion below will surface the failure */});
+
+  // A <ruby> element must now exist inside the paragraph. Without furigana injection
+  // this would be absent because the source HTML contained none.
+  const rubyCount = await page.locator('#test-para ruby').count();
+  expect(rubyCount).toBeGreaterThan(0);
+
+  // The <rt> element must exist and contain non-empty hiragana text. kuromoji returns
+  // the reading as katakana; injectFurigana must convert it to hiragana before placing
+  // it in <rt>. An empty or missing <rt> means injection either did not run or
+  // produced broken markup.
+  const rtLocator = page.locator('#test-para rt').first();
+  await expect(rtLocator).toBeAttached();
+  const rtText = await rtLocator.textContent();
+  expect(rtText).toBeTruthy();
+  // Hiragana codepoint range: U+3041–U+3096
+  expect(/[ぁ-ゖ]/.test(rtText)).toBe(true);
+
+  // The <rt> must be visible (not hidden by anki-hide-furigana). 食べる is not in the
+  // AnkiKan-E2E deck so it will receive anki-unknown; furiganaUnknown defaults to true,
+  // so the computed visibility of <rt> must be "visible", not "hidden".
+  const rtVisibility = await page.evaluate(() => {
+    const rt = document.querySelector('#test-para rt');
+    return rt ? window.getComputedStyle(rt).visibility : 'missing';
+  });
+  expect(rtVisibility).toBe('visible');
+
+  await page.close();
+});
+
+// ---------------------------------------------------------------------------
+// AC-20 — Local mode: matched kanji (日本語, anki-learned) with furiganaLearned:false
+//          — ruby is injected but hidden via anki-hide-furigana
+//
+// 日本語 IS in the AnkiKan-E2E deck as type 2 (learned). With furiganaLearned:false
+// the span must carry both anki-learned (from the Anki lookup) and anki-hide-furigana
+// (from the applyFurigana visibility gate). Crucially the <ruby>/<rt> must ALSO be
+// present in the DOM — injection must have run even though the reading is then hidden.
+// This distinguishes "furigana synthesised and suppressed" from "furigana never built".
+// ---------------------------------------------------------------------------
+
+test('AC-20: local mode — 日本語 (anki-learned) with furiganaLearned:false has ruby present but rt visibility hidden', async () => {
+  // The user's choice to hide furigana on learned words should suppress the <rt> via
+  // CSS (visibility:hidden via .anki-hide-furigana rt rule), not prevent injection.
+  // If the <ruby> were absent entirely the user could not toggle furigana back on
+  // without a full page rescan + re-injection.
+  const popup = await openPopup();
+  await clearStorage(popup);
+  await seedStorage(popup, {
+    lemmaMode: 'local',
+    furiganaGlobal: true,
+    furiganaUnlearned: true,
+    furiganaLearning: true,
+    furiganaLearned: false,   // hide furigana on learned words — the key toggle for AC-20
+  });
+  await seedDictInIndexedDB(popup, SERIALIZED_DICT_FILES);
+  await popup.close();
+
+  const page = await browserContext.newPage();
+
+  // Raw text page containing only 日本語. No pre-existing <ruby> or <span> markup.
+  // 日本語 is in the AnkiKan-E2E deck as type 2 (learned); kuromoji gives reading ニホンゴ.
+  const rawHtml = `<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>AnkiKan Furigana Hide E2E</title></head>
+<body>
+  <p id="test-para-hide">日本語</p>
+</body>
+</html>`;
+
+  await page.route('http://test-furigana-hide.local/', (route) =>
+    route.fulfill({ contentType: 'text/html', body: rawHtml }),
+  );
+  await page.goto('http://test-furigana-hide.local/');
+
+  // Wait for the anki-learned class (proving the Anki lookup completed).
+  await page
+    .locator('#test-para-hide .anki-learned')
+    .first()
+    .waitFor({ timeout: 25000 })
+    .catch(() => {});
+
+  // The span must carry anki-learned (日本語 is type 2 in AnkiConnect).
+  await expect(
+    page.locator('#test-para-hide span').filter({ hasText: '日本語' }),
+  ).toHaveClass(/anki-learned/);
+
+  // The span must also carry anki-hide-furigana because furiganaLearned is false.
+  // This class is what the CSS rule `.anki-hide-furigana rt { visibility: hidden }` targets.
+  await expect(
+    page.locator('#test-para-hide span').filter({ hasText: '日本語' }),
+  ).toHaveClass(/anki-hide-furigana/);
+
+  // A <ruby> element must exist — injection must have run even though the reading is hidden.
+  // Without the <ruby> in the DOM there is nothing to reveal if the user later toggles
+  // furiganaLearned back to true.
+  const rubyCount = await page.locator('#test-para-hide ruby').count();
+  expect(rubyCount).toBeGreaterThan(0);
+
+  // The <rt> must be present in the DOM (injection ran) but its computed visibility
+  // must be 'hidden' because the .anki-hide-furigana CSS rule suppresses it.
+  const rtLocator = page.locator('#test-para-hide rt').first();
+  await expect(rtLocator).toBeAttached();
+
+  const rtVisibility = await page.evaluate(() => {
+    const rt = document.querySelector('#test-para-hide rt');
+    return rt ? window.getComputedStyle(rt).visibility : 'missing';
+  });
+  expect(rtVisibility).toBe('hidden');
+
+  await page.close();
+});
+
+// ---------------------------------------------------------------------------
+// AC-21 — Server mode and off mode produce no extension-injected <ruby> elements
+//
+// Server mode (lemmaMode:'server') defers furigana to issue #32 — kuromoji is
+// not initialised, so no reading fields are available and no <ruby> is injected.
+// Off mode has no kuromoji at all.
+//
+// Both modes are tested with a raw text page that has no author-supplied <ruby>.
+// Any <ruby> found in the DOM after the content script runs must have been injected
+// by the extension; since injection must NOT occur in these modes, zero <ruby>
+// elements are expected.
+// ---------------------------------------------------------------------------
+
+test('AC-21a: server mode — no extension-injected <ruby> elements on raw-text page', async () => {
+  // In server mode the extension queries AnkiConnect for card status but does NOT
+  // run the local kuromoji tokeniser. Without kuromoji readings there is no data
+  // from which to synthesise furigana, so injectFurigana must not be called and
+  // no <ruby> elements should appear.
+  const popup = await openPopup();
+  await clearStorage(popup);
+  await seedStorage(popup, {
+    lemmaMode: 'server',
+    furiganaGlobal: true,
+    furiganaUnlearned: true,
+    furiganaLearning: true,
+    furiganaLearned: true,
+  });
+  // No dict seeded — server mode must not use the local kuromoji dict even if one
+  // happened to be present from an earlier test in the shared browser context.
+  await clearDictInIndexedDB(popup);
+  await popup.close();
+
+  const page = await browserContext.newPage();
+
+  // The page contains pre-existing <span> elements so that scanPage can run its
+  // normal Anki lookup path (testing that the server-mode scan pipeline itself does
+  // not inadvertently trigger furigana injection). 食べる is not in the E2E deck so
+  // its span will receive anki-unknown; 日本語 is in the deck as learned.
+  const serverHtml = `<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>AnkiKan Server Mode Furigana E2E</title></head>
+<body>
+  <p id="server-para">
+    <span id="sp-taberu">食べる</span>
+    <span id="sp-nihongo" data-lemma="日本語">日本語</span>
+  </p>
+</body>
+</html>`;
+
+  await page.route('http://test-furigana-server.local/', (route) =>
+    route.fulfill({ contentType: 'text/html', body: serverHtml }),
+  );
+  await page.goto('http://test-furigana-server.local/');
+
+  // Wait for the Anki scan to complete (anki-* class should appear on #sp-nihongo).
+  // This ensures the content script has fully run before we assert ruby absence.
+  await page
+    .locator('#server-para [class*="anki-"]')
+    .first()
+    .waitFor({ timeout: 15000 })
+    .catch(() => {});
+
+  // No <ruby> elements may be present — the source HTML had none and server mode
+  // must not inject any.
+  const rubyCount = await page.locator('#server-para ruby').count();
+  expect(rubyCount).toBe(0);
+
+  await page.close();
+});
+
+test('AC-21b: off mode — no extension-injected <ruby> elements on raw-text page', async () => {
+  // In off mode the content script does not initialise kuromoji, does not run
+  // segmentAndWrap, and does not call scanPage. The page must be left completely
+  // unmodified: no <span> injected, no <ruby> injected, no anki-* classes.
+  const popup = await openPopup();
+  await clearStorage(popup);
+  await seedStorage(popup, { lemmaMode: 'off' });
+  await clearDictInIndexedDB(popup);
+  await popup.close();
+
+  const page = await browserContext.newPage();
+
+  // Plain raw-text page with no markup — same structure as AC-19 so that any
+  // accidental injection would be clearly visible in the DOM.
+  const offHtml = `<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>AnkiKan Off Mode Furigana E2E</title></head>
+<body>
+  <p id="off-para">食べる</p>
+</body>
+</html>`;
+
+  await page.route('http://test-furigana-off.local/', (route) =>
+    route.fulfill({ contentType: 'text/html', body: offHtml }),
+  );
+  await page.goto('http://test-furigana-off.local/');
+
+  // Give the content script enough time to complete its startup sequence.
+  // No positive signal to wait on — we are asserting absence.
+  await page.waitForTimeout(5000);
+
+  // No <ruby> elements — the source had none and off mode must not inject any.
+  const rubyCount = await page.locator('#off-para ruby').count();
+  expect(rubyCount).toBe(0);
+
+  // No anki-* classes either — off mode suppresses the entire pipeline.
+  const ankiClassCount = await page.locator('#off-para [class*="anki-"]').count();
+  expect(ankiClassCount).toBe(0);
 
   await page.close();
 });
