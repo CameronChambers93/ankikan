@@ -10,6 +10,9 @@
  * AC-2: applyFurigana toggles anki-hide-furigana based on settings flags.
  * AC-4–AC-9: scanPage is tested via its new injection-seam signature.
  *
+ * Issue #31 (T-31-018–T-31-021): scanPage furigana injection pass — verifies
+ * that <ruby>/<rt> markup is synthesised for spans carrying dataset.reading.
+ *
  * Issue #33: T-22-034 updated — STATUS_CLASSES now includes 'anki-unknown'.
  *            T-22-033 updated — zero-card result now applies 'anki-unknown'.
  *            New: T-33-001 through T-33-014 cover AC-1 through AC-9 for unknown.
@@ -530,5 +533,138 @@ describe('exported constants', () => {
     // ALL_CLASSES is the complete list used for cleanup; it must include
     // anki-unknown so stale unknown markers are removed before rescanning.
     expect(ALL_CLASSES).toContain('anki-unknown');
+  });
+});
+
+// ===========================================================================
+// Issue #31: scanPage furigana injection pass (T-31-018 – T-31-021)
+//
+// These tests verify that scanPage calls injectFurigana on spans that carry
+// dataset.reading, regardless of whether the span matched an Anki card.
+// The ruby/rt structure must be present after scanPage completes.
+// ===========================================================================
+
+describe('scanPage — issue #31 AC-15/16: furigana injection for spans with dataset.reading', () => {
+  const baseSettings = {
+    fieldName: 'Expression',
+    furiganaGlobal: true,
+    furiganaUnlearned: true,
+    furiganaLearning: true,
+    furiganaLearned: true,
+    lemmaMode: 'off',
+    useLemma: false,
+  };
+
+  it('T-31-018: test_unmatched_span_with_dataset_reading_gets_ruby_injected', async () => {
+    // Furigana must be synthesised for spans that kuromoji annotated with a
+    // reading even when Anki has no matching card; this is the primary use-case
+    // of #31 — plain kanji on pages without pre-existing <ruby> markup.
+    const doc = makeDoc('<span>食べる</span>');
+    const span = doc.querySelector('span');
+    span.dataset.reading = 'タベル';
+
+    // No Anki card found for this word
+    const ankiRequest = vi.fn().mockResolvedValue({ result: [[]], error: null });
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    expect(span.querySelector('ruby')).not.toBeNull();
+    const rt = span.querySelector('rt');
+    expect(rt).not.toBeNull();
+    expect(rt.textContent.length).toBeGreaterThan(0);
+  });
+
+  it('T-31-019: test_matched_span_with_dataset_reading_gets_ruby_injected', async () => {
+    // A span that both has a kuromoji reading AND matches an Anki card must
+    // also receive injected furigana; injection must not be gated on match status.
+    const doc = makeDoc('<span>食べる</span>');
+    const span = doc.querySelector('span');
+    span.dataset.reading = 'タベル';
+
+    // Anki card found → span will be classified as anki-unlearned
+    const ankiRequest = vi.fn()
+      .mockResolvedValueOnce({ result: [[42]], error: null })
+      .mockResolvedValueOnce({ result: [{ cardId: 42, type: 0 }], error: null });
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    expect(span.classList.contains('anki-unlearned')).toBe(true);
+    expect(span.querySelector('ruby')).not.toBeNull();
+    const rt = span.querySelector('rt');
+    expect(rt).not.toBeNull();
+    expect(rt.textContent.length).toBeGreaterThan(0);
+  });
+});
+
+describe('scanPage — issue #31 AC-17: furigana visibility gating unchanged after injection', () => {
+  it('T-31-020: test_anki_unlearned_span_with_furigana_hidden_gets_hide_class', async () => {
+    // The per-status furigana toggle must still apply after ruby is injected;
+    // anki-hide-furigana must appear on the span AND synthesised <ruby> must be
+    // present — verifying both that injection ran and that gating still works.
+    const settings = {
+      fieldName: 'Expression',
+      furiganaGlobal: true,
+      furiganaUnlearned: false,  // hide furigana for unlearned words
+      furiganaLearning: true,
+      furiganaLearned: true,
+      lemmaMode: 'off',
+      useLemma: false,
+    };
+
+    const doc = makeDoc('<span>食べる</span>');
+    const span = doc.querySelector('span');
+    span.dataset.reading = 'タベル';
+
+    const ankiRequest = vi.fn()
+      .mockResolvedValueOnce({ result: [[7]], error: null })
+      .mockResolvedValueOnce({ result: [{ cardId: 7, type: 0 }], error: null });
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    await scanPage(settings, { ankiRequest, fetchLemmas, doc });
+
+    // Injection must have happened (ruby is present) AND the hide class must be set.
+    // Both assertions fail until injectFurigana is wired into scanPage.
+    expect(span.querySelector('ruby')).not.toBeNull();
+    expect(span.classList.contains('anki-unlearned')).toBe(true);
+    expect(span.classList.contains('anki-hide-furigana')).toBe(true);
+  });
+});
+
+describe('scanPage — issue #31 AC-18: pre-existing ruby in original HTML is not modified', () => {
+  it('T-31-021: test_span_with_preexisting_ruby_not_modified_by_scanpage', async () => {
+    // A span carrying BOTH a dataset.reading AND an existing <ruby> child
+    // must not receive a second injected <ruby>; injectFurigana's guard must
+    // detect the pre-existing <ruby> and bail out, leaving exactly one <rt>.
+    // dataset.reading is set so that a naive implementation without the guard
+    // would proceed to inject, producing a second <rt>.
+    const doc = makeDoc('<span><ruby>日本<rt>にほん</rt></ruby>語</span>');
+    const span = doc.querySelector('span');
+    // Give it a reading so an implementation without the "already has ruby" guard
+    // would fire injectFurigana and produce a second <rt>.
+    span.dataset.reading = 'ニホンゴ';
+    const originalHTML = span.innerHTML;
+
+    const ankiRequest = vi.fn().mockResolvedValue({ result: [[]], error: null });
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    await scanPage(
+      {
+        fieldName: 'Expression',
+        furiganaGlobal: true,
+        furiganaUnlearned: true,
+        furiganaLearning: true,
+        furiganaLearned: true,
+        lemmaMode: 'off',
+        useLemma: false,
+      },
+      { ankiRequest, fetchLemmas, doc },
+    );
+
+    // Exactly one <rt> must exist — the original author-provided one.
+    // If injectFurigana fired without the guard, a second <rt> would appear.
+    expect(span.querySelectorAll('rt').length).toBe(1);
+    expect(span.innerHTML).toBe(originalHTML);
   });
 });
