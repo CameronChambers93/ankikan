@@ -23,7 +23,7 @@ export function resetToDefaults(doc, storageFn, messageFn) {
   doc.getElementById('global-outline-color').value   = defaults.default.outlineColor;
   doc.getElementById('global-outline-opacity').value = defaults.default.outlineOpacity;
   doc.getElementById('global-outline-width').value   = defaults.default.outlineWidth;
-  for (const cat of ['unlearned', 'learning', 'learned']) {
+  for (const cat of ['unlearned', 'learning', 'learned', 'unknown']) {
     const enabledEl = doc.getElementById(`${cat}-bg-color-enabled`);
     const colorEl   = doc.getElementById(`${cat}-bg-color`);
     const opacityEl = doc.getElementById(`${cat}-bg-opacity`);

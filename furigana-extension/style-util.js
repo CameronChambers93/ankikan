@@ -15,6 +15,7 @@ export const STYLE_DEFAULTS = {
     unlearned: {},
     learning: {},
     learned: {},
+    unknown: {},
   },
 };
 
@@ -23,6 +24,7 @@ export const BUILT_IN_STYLE_FALLBACK = {
   unlearned: { backgroundColor: '#dc4646', backgroundOpacity: 0.22, borderRadius: 3, outlineColor: '#dc4646', outlineOpacity: 0.35, outlineWidth: 1 },
   learning:  { backgroundColor: '#e6aa1e', backgroundOpacity: 0.22, borderRadius: 3, outlineColor: '#e6aa1e', outlineOpacity: 0.40, outlineWidth: 1 },
   learned:   { backgroundColor: '#32aa50', backgroundOpacity: 0.22, borderRadius: 3, outlineColor: '#32aa50', outlineOpacity: 0.35, outlineWidth: 1 },
+  unknown:   { backgroundColor: '#808080', backgroundOpacity: 0.22, borderRadius: 3, outlineColor: '#808080', outlineOpacity: 0.35, outlineWidth: 1 },
 };
 
 /**
@@ -90,6 +92,7 @@ export function resolveStyleSettings(stored) {
     unlearned: { ...(stored.unlearned ?? {}) },
     learning: { ...(stored.learning ?? {}) },
     learned: { ...(stored.learned ?? {}) },
+    unknown: { ...(stored?.unknown ?? {}) },
   };
 }
 
@@ -112,7 +115,7 @@ export function injectStyles(doc, styleSettings) {
 }
 
 export function buildStyleSheet(styleSettings) {
-  const categories = ['unlearned', 'learning', 'learned'];
+  const categories = ['unknown', 'unlearned', 'learning', 'learned'];
   return categories.map((cat) => {
     const s = resolveCategory(styleSettings, cat);
     const bg = hexToRgb(s.backgroundColor);

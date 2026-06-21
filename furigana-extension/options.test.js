@@ -10,6 +10,7 @@ import { STYLE_DEFAULTS } from './style-util.js';
 // Helper — build a JSDOM document that mirrors the options.html input contract.
 // All input IDs are the DOM contract shared between options.html and options.js.
 // Issue #11 adds: #importDictBtn, #dictFileInput, #dictStatus
+// Issue #33 adds: #unknown-bg-color-enabled, #unknown-bg-color, #unknown-bg-opacity
 // ---------------------------------------------------------------------------
 
 function makeOptionsDoc({
@@ -28,6 +29,9 @@ function makeOptionsDoc({
   learnedEnabled = false,
   learnedBgColor = '#808080',
   learnedBgOpacity = '',
+  unknownEnabled = false,
+  unknownBgColor = '#808080',
+  unknownBgOpacity = '',
 } = {}) {
   const { window } = new JSDOM(`<!DOCTYPE html><html><body>
     <input id="global-bg-color"        type="color"   value="${globalBgColor}">
@@ -48,6 +52,10 @@ function makeOptionsDoc({
     <input id="learned-bg-color-enabled"   type="checkbox" ${learnedEnabled ? 'checked' : ''}>
     <input id="learned-bg-color"           type="color"   value="${learnedBgColor}" ${learnedEnabled ? '' : 'disabled'}>
     <input id="learned-bg-opacity"         type="number"  value="${learnedBgOpacity}">
+
+    <input id="unknown-bg-color-enabled"   type="checkbox" ${unknownEnabled ? 'checked' : ''}>
+    <input id="unknown-bg-color"           type="color"   value="${unknownBgColor}" ${unknownEnabled ? '' : 'disabled'}>
+    <input id="unknown-bg-opacity"         type="number"  value="${unknownBgOpacity}">
 
     <button id="resetStylesBtn">Reset to defaults</button>
 
@@ -142,6 +150,34 @@ describe('loadStyleSettings (AC4)', () => {
     expect(doc.getElementById('global-bg-color').value).toBe(STYLE_DEFAULTS.styleSettings.default.backgroundColor);
     expect(Number(doc.getElementById('global-bg-opacity').value)).toBe(STYLE_DEFAULTS.styleSettings.default.backgroundOpacity);
   });
+
+  it('T-33-020: loadStyleSettings with unknown:{backgroundColor:"#808080"} → unknown enable checkbox checked and colour #808080 (issue #33 AC-23)', async () => {
+    // When storage contains a backgroundColor for the unknown category, the
+    // checkbox must be checked and the colour input must show the stored value.
+    const { loadStyleSettings } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    const stored = {
+      ...STYLE_DEFAULTS.styleSettings,
+      unknown: { backgroundColor: '#808080' },
+    };
+    const storageGet = vi.fn().mockResolvedValue({ styleSettings: stored });
+    await loadStyleSettings(doc, storageGet);
+    expect(doc.getElementById('unknown-bg-color-enabled').checked).toBe(true);
+    expect(doc.getElementById('unknown-bg-color').value).toBe('#808080');
+    expect(doc.getElementById('unknown-bg-color').disabled).toBe(false);
+  });
+
+  it('T-33-021: loadStyleSettings with unknown:{} → unknown enable checkbox unchecked and colour input disabled (issue #33 AC-24)', async () => {
+    // An empty unknown override means "inherit from global default"; the checkbox
+    // must be unchecked and the input disabled so no spurious override is stored.
+    const { loadStyleSettings } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    const stored = { ...STYLE_DEFAULTS.styleSettings, unknown: {} };
+    const storageGet = vi.fn().mockResolvedValue({ styleSettings: stored });
+    await loadStyleSettings(doc, storageGet);
+    expect(doc.getElementById('unknown-bg-color-enabled').checked).toBe(false);
+    expect(doc.getElementById('unknown-bg-color').disabled).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -224,6 +260,24 @@ describe('currentStyleSettings (AC5)', () => {
     const doc = makeOptionsDoc({ learningBgOpacity: '' });
     const result = currentStyleSettings(doc);
     expect(result.learning).not.toHaveProperty('backgroundOpacity');
+  });
+
+  it('T-33-022: currentStyleSettings with #unknown-bg-color-enabled checked and value #334455 → result.unknown.backgroundColor === "#334455" (issue #33 AC-25)', async () => {
+    // When the unknown override checkbox is checked, the colour value must be
+    // captured in the returned settings object so it can be persisted correctly.
+    const { currentStyleSettings } = await import('./options.js');
+    const doc = makeOptionsDoc({ unknownEnabled: true, unknownBgColor: '#334455' });
+    const result = currentStyleSettings(doc);
+    expect(result.unknown).toHaveProperty('backgroundColor', '#334455');
+  });
+
+  it('T-33-023: currentStyleSettings with #unknown-bg-color-enabled unchecked → result.unknown has no backgroundColor (issue #33 AC-26)', async () => {
+    // An unchecked unknown enable means no override; storing backgroundColor
+    // would prevent the fallback from ever being used.
+    const { currentStyleSettings } = await import('./options.js');
+    const doc = makeOptionsDoc({ unknownEnabled: false, unknownBgColor: '#334455' });
+    const result = currentStyleSettings(doc);
+    expect(result.unknown).not.toHaveProperty('backgroundColor');
   });
 });
 
@@ -388,6 +442,16 @@ describe('options.js reset handler (AC8)', () => {
     await resetOptionsToDefaults(doc, vi.fn().mockResolvedValue(undefined), messageSpy);
     expect(messageSpy).toHaveBeenCalledOnce();
     expect(messageSpy.mock.calls[0][0].action).toBe('refreshStyles');
+  });
+
+  it('T-33-024: resetOptionsToDefaults unchecks #unknown-bg-color-enabled and disables #unknown-bg-color (issue #33 AC-27)', async () => {
+    // The reset must also clear the unknown override checkbox and disable the
+    // colour input so the unknown category falls back to its built-in grey.
+    const { resetOptionsToDefaults } = await import('./options.js');
+    const doc = makeOptionsDoc({ unknownEnabled: true, unknownBgColor: '#aabbcc' });
+    await resetOptionsToDefaults(doc, vi.fn().mockResolvedValue(undefined), vi.fn());
+    expect(doc.getElementById('unknown-bg-color-enabled').checked).toBe(false);
+    expect(doc.getElementById('unknown-bg-color').disabled).toBe(true);
   });
 });
 
@@ -603,5 +667,35 @@ describe('refreshDictStatus (Issue #11)', () => {
     const doc = makeOptionsDoc();
     await refreshDictStatus(doc);
     expect(doc.getElementById('dictStatus').textContent).toBe('Not loaded');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #33 — options.html contains unknown-category inputs  (T-33-025)
+// ---------------------------------------------------------------------------
+
+describe('options.html unknown-category inputs (issue #33 AC-22)', () => {
+  let doc;
+
+  beforeEach(async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'options.html');
+    const html = fs.readFileSync(htmlPath, 'utf8');
+    doc = new JSDOM(html, { url: 'http://localhost/' }).window.document;
+  });
+
+  it('T-33-025: options.html contains #unknown-bg-color-enabled, #unknown-bg-color, and #unknown-bg-opacity (issue #33 AC-22)', () => {
+    // The options page must expose controls for the new unknown category so the
+    // user can customise its highlight colour; absent inputs mean the category
+    // cannot be configured through the UI.
+    const enabledEl = doc.getElementById('unknown-bg-color-enabled');
+    const colorEl   = doc.getElementById('unknown-bg-color');
+    const opacityEl = doc.getElementById('unknown-bg-opacity');
+    expect(enabledEl, '#unknown-bg-color-enabled must exist in options.html').not.toBeNull();
+    expect(enabledEl.type).toBe('checkbox');
+    expect(colorEl, '#unknown-bg-color must exist in options.html').not.toBeNull();
+    expect(colorEl.type).toBe('color');
+    expect(opacityEl, '#unknown-bg-opacity must exist in options.html').not.toBeNull();
   });
 });
