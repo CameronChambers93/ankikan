@@ -1,4 +1,4 @@
-import { readDictFile } from './dict-store.js';
+import { readDictFile } from '../shared/dict-store.js';
 
 /** Cross-browser API shim — resolves to `browser` (Firefox) or `chrome` (Chromium). */
 const ext = typeof browser !== 'undefined' ? browser : chrome;
