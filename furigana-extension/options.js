@@ -1,4 +1,4 @@
-import { STYLE_DEFAULTS, resolveStyleSettings } from './style-util.js';
+import { STYLE_DEFAULTS, BUILT_IN_STYLE_FALLBACK, resolveStyleSettings } from './style-util.js';
 import { ZipReader, BlobReader, BlobWriter } from '@zip.js/zip.js';
 import { saveDictionary, hasDictionary } from './dict-store.js';
 import { validateDictFiles } from './lemma-util.js';
@@ -26,7 +26,7 @@ export async function loadStyleSettings(doc, storageGet) {
     const hasColor   = 'backgroundColor' in overrides;
     doc.getElementById(`${cat}-bg-color-enabled`).checked  = hasColor;
     doc.getElementById(`${cat}-bg-color`).disabled         = !hasColor;
-    doc.getElementById(`${cat}-bg-color`).value            = overrides.backgroundColor ?? '#808080';
+    doc.getElementById(`${cat}-bg-color`).value            = overrides.backgroundColor ?? BUILT_IN_STYLE_FALLBACK[cat].backgroundColor;
     doc.getElementById(`${cat}-bg-opacity`).value          = overrides.backgroundOpacity ?? '';
   }
 }
@@ -99,7 +99,7 @@ export async function resetOptionsToDefaults(doc, storageSet, messageFn) {
     const colorEl   = doc.getElementById(`${cat}-bg-color`);
     const opacityEl = doc.getElementById(`${cat}-bg-opacity`);
     if (enabledEl) { enabledEl.checked = false; }
-    if (colorEl)   { colorEl.disabled = true; colorEl.value = ''; }
+    if (colorEl)   { colorEl.disabled = true; colorEl.value = BUILT_IN_STYLE_FALLBACK[cat].backgroundColor; }
     if (opacityEl) { opacityEl.value = ''; }
   }
 
@@ -221,5 +221,5 @@ if (typeof document !== 'undefined' && ext) {
   });
   refreshDictStatus(document);
 
-  loadStyleSettings(document, storageGet);
+  await loadStyleSettings(document, storageGet);
 }

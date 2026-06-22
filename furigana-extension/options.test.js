@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { STYLE_DEFAULTS } from './style-util.js';
+import { STYLE_DEFAULTS, BUILT_IN_STYLE_FALLBACK } from './style-util.js';
 
 // options.js does not exist yet — dynamic imports below will throw until it is created.
 // Using dynamic import inside each test means individual tests fail with a meaningful
@@ -667,6 +667,97 @@ describe('refreshDictStatus (Issue #11)', () => {
     const doc = makeOptionsDoc();
     await refreshDictStatus(doc);
     expect(doc.getElementById('dictStatus').textContent).toBe('Not loaded');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #28 — Per-category colour swatches show correct built-in defaults
+//
+// When a category has no backgroundColor override in storage the swatch must
+// display the category's BUILT_IN_STYLE_FALLBACK colour, not a generic grey.
+// loadStyleSettings() and resetOptionsToDefaults() are both affected.
+// ---------------------------------------------------------------------------
+
+describe('Issue #28 — per-category swatch defaults', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('T-28-001: loadStyleSettings sets each swatch to BUILT_IN_STYLE_FALLBACK colour when no backgroundColor override is stored', async () => {
+    // Without this fix the swatches show #808080 (generic grey) even though the
+    // actual highlight renders the per-category BUILT_IN_STYLE_FALLBACK colour,
+    // causing a visible mismatch between the options preview and the live page.
+    const { loadStyleSettings } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    // Storage returns per-category objects with NO backgroundColor key, meaning no user override.
+    const stored = {
+      ...STYLE_DEFAULTS.styleSettings,
+      unlearned: {},
+      learning: {},
+      learned: {},
+    };
+    const storageGet = vi.fn().mockResolvedValue({ styleSettings: stored });
+    await loadStyleSettings(doc, storageGet);
+
+    expect(doc.getElementById('unlearned-bg-color').value).toBe(BUILT_IN_STYLE_FALLBACK.unlearned.backgroundColor);
+    expect(doc.getElementById('learning-bg-color').value).toBe(BUILT_IN_STYLE_FALLBACK.learning.backgroundColor);
+    expect(doc.getElementById('learned-bg-color').value).toBe(BUILT_IN_STYLE_FALLBACK.learned.backgroundColor);
+  });
+
+  it('T-28-002: resetOptionsToDefaults sets each swatch to BUILT_IN_STYLE_FALLBACK colour', async () => {
+    // resetOptionsToDefaults() was setting colorEl.value = '' which left the
+    // swatch as an empty string / browser default rather than the built-in colour.
+    // After reset the user must see the canonical per-category preview colour.
+    const { resetOptionsToDefaults } = await import('./options.js');
+    const doc = makeOptionsDoc({
+      unlearnedBgColor: '#ffffff',
+      learningBgColor: '#ffffff',
+      learnedBgColor: '#ffffff',
+    });
+    const storageSet = vi.fn().mockResolvedValue(undefined);
+    await resetOptionsToDefaults(doc, storageSet, vi.fn());
+
+    expect(doc.getElementById('unlearned-bg-color').value).toBe(BUILT_IN_STYLE_FALLBACK.unlearned.backgroundColor);
+    expect(doc.getElementById('learning-bg-color').value).toBe(BUILT_IN_STYLE_FALLBACK.learning.backgroundColor);
+    expect(doc.getElementById('learned-bg-color').value).toBe(BUILT_IN_STYLE_FALLBACK.learned.backgroundColor);
+  });
+
+  it('T-28-003: loadStyleSettings shows the stored colour when a category has an explicit backgroundColor override', async () => {
+    // The fallback must not fire when an explicit user override is present; this
+    // guards the fix from inadvertently clobbering real user-saved colours.
+    const { loadStyleSettings } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    const stored = {
+      ...STYLE_DEFAULTS.styleSettings,
+      unlearned: { backgroundColor: '#123456' },
+      learning:  { backgroundColor: '#abcdef' },
+      learned:   { backgroundColor: '#fedcba' },
+    };
+    const storageGet = vi.fn().mockResolvedValue({ styleSettings: stored });
+    await loadStyleSettings(doc, storageGet);
+
+    expect(doc.getElementById('unlearned-bg-color').value).toBe('#123456');
+    expect(doc.getElementById('learning-bg-color').value).toBe('#abcdef');
+    expect(doc.getElementById('learned-bg-color').value).toBe('#fedcba');
+  });
+
+  it('T-28-004: after resetOptionsToDefaults, currentStyleSettings returns no backgroundColor key for any category', async () => {
+    // The swatch value after reset is purely cosmetic; writing it into storage as
+    // a backgroundColor override would cause categories to ignore the global default
+    // and BUILT_IN_STYLE_FALLBACK would never be reached in resolveCategory().
+    const { resetOptionsToDefaults, currentStyleSettings } = await import('./options.js');
+    const doc = makeOptionsDoc({
+      unlearnedEnabled: true, unlearnedBgColor: '#ff0000',
+      learningEnabled:  true, learningBgColor:  '#00ff00',
+      learnedEnabled:   true, learnedBgColor:   '#0000ff',
+    });
+    const storageSet = vi.fn().mockResolvedValue(undefined);
+    await resetOptionsToDefaults(doc, storageSet, vi.fn());
+
+    const settings = currentStyleSettings(doc);
+    expect(settings.unlearned).not.toHaveProperty('backgroundColor');
+    expect(settings.learning).not.toHaveProperty('backgroundColor');
+    expect(settings.learned).not.toHaveProperty('backgroundColor');
   });
 });
 
