@@ -11,6 +11,7 @@ const DEFAULTS = {
   furiganaUnlearned: true,
   furiganaLearning: true,
   furiganaLearned: false,
+  furiganaUnknown: true,
   lemmaMode: null,
   useLemma: false,
 };
@@ -60,6 +61,7 @@ export async function loadSettings(doc, storageGet, storageSet) {
   doc.getElementById('furiganaUnlearned').checked = s.furiganaUnlearned;
   doc.getElementById('furiganaLearning').checked = s.furiganaLearning;
   doc.getElementById('furiganaLearned').checked = s.furiganaLearned;
+  doc.getElementById('furiganaUnknown').checked = s.furiganaUnknown ?? true;
   doc.getElementById('lemmaMode').value = mode;
   updatePerStatusState(doc, s.furiganaGlobal);
   updateLemmaModeUI(doc, mode);
@@ -84,6 +86,7 @@ export function currentSettings(doc) {
     furiganaUnlearned: doc.getElementById('furiganaUnlearned').checked,
     furiganaLearning: doc.getElementById('furiganaLearning').checked,
     furiganaLearned: doc.getElementById('furiganaLearned').checked,
+    furiganaUnknown: doc.getElementById('furiganaUnknown').checked,
     lemmaMode: doc.getElementById('lemmaMode').value,
   };
 }
@@ -155,6 +158,7 @@ if (ext) {
   $('furiganaUnlearned').addEventListener('change', onFuriganaChange);
   $('furiganaLearning').addEventListener('change', onFuriganaChange);
   $('furiganaLearned').addEventListener('change', onFuriganaChange);
+  $('furiganaUnknown').addEventListener('change', onFuriganaChange);
 
   $('openOptionsBtn').addEventListener('click', () => ext.runtime.openOptionsPage());
 

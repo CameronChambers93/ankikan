@@ -1,6 +1,7 @@
 import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet, injectStyles, resolveStyleSettings } from './style-util.js';
 import { resolveLemmaMode, filterLemmaMap } from './lemma-util.js';
 import { segmentAndWrap } from './content.segmentation.js';
+import { collectAddedRoots, debounce } from './content.observer.js';
 import DynamicDictionaries from 'kuromoji/src/dict/DynamicDictionaries.js';
 import Tokenizer from 'kuromoji/src/Tokenizer.js';
 import { Zlib } from 'zlibjs/bin/gunzip.min.js';
@@ -17,6 +18,7 @@ const DEFAULTS = {
   furiganaUnlearned: true,
   furiganaLearning: true,
   furiganaLearned: false,
+  furiganaUnknown: true,
   lemmaMode: null,
   useLemma: false,
   styleSettings: null,
@@ -139,6 +141,40 @@ async function buildKuromoji() {
   }
 }
 
+/**
+ * Starts a debounced MutationObserver on document.body that re-segments newly
+ * added subtrees and re-runs scanPage whenever Japanese content is injected after
+ * document_idle (SPA route changes, infinite scroll, lazy-load, etc.).
+ *
+ * @param {object} tok      - The kuromoji tokenizer (has .tokenize()).
+ * @param {object} settings - Extension settings (passed through to scanPage).
+ */
+function startObserver(tok, settings) {
+  let observer;
+  const pending = new Set();
+
+  const flush = debounce(() => {
+    const roots = [...pending];
+    pending.clear();
+    observer.disconnect();
+    for (const root of roots) {
+      if (!document.contains(root)) continue;
+      segmentAndWrap(root, isJapanese, tok.tokenize.bind(tok));
+    }
+    scanPage(settings, { ankiRequest, fetchLemmas }).finally(() => {
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+  }, 300);
+
+  observer = new MutationObserver((records) => {
+    for (const root of collectAddedRoots(records)) pending.add(root);
+    if (pending.size === 0) return;
+    flush();
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
 if (typeof chrome !== 'undefined' || typeof browser !== 'undefined') {
   ext.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'scan') {
@@ -168,7 +204,10 @@ if (typeof chrome !== 'undefined' || typeof browser !== 'undefined') {
     if (mode === 'local' && document.querySelector('span[data-lemma]') === null) {
       if (!_tokenizerPromise) _tokenizerPromise = buildKuromoji();
       const tok = await _tokenizerPromise;
-      if (tok) segmentAndWrap(document.body, isJapanese, tok.tokenize.bind(tok));
+      if (tok) {
+        segmentAndWrap(document.body, isJapanese, tok.tokenize.bind(tok));
+        startObserver(tok, settings);
+      }
     }
 
     scanPage(settings, { ankiRequest, fetchLemmas });

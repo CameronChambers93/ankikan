@@ -1,6 +1,7 @@
 import { resolveLemmaMode } from './lemma-util.js';
+import { injectFurigana } from './content.segmentation.js';
 
-export const STATUS_CLASSES = ['anki-unlearned', 'anki-learning', 'anki-learned'];
+export const STATUS_CLASSES = ['anki-unlearned', 'anki-learning', 'anki-learned', 'anki-unknown'];
 export const ALL_CLASSES = [...STATUS_CLASSES, 'anki-duplicate', 'anki-hide-furigana'];
 
 /** Returns true if `word` contains at least one Han, Hiragana, or Katakana character. */
@@ -61,6 +62,7 @@ export function applyFurigana(span, statusClass, settings) {
     'anki-unlearned': settings.furiganaUnlearned,
     'anki-learning': settings.furiganaLearning,
     'anki-learned': settings.furiganaLearned,
+    'anki-unknown': settings.furiganaUnknown ?? true,
   }[statusClass] ?? true;
   span.classList.toggle('anki-hide-furigana', !show);
 }
@@ -139,39 +141,45 @@ export async function scanPage(settings, { ankiRequest, fetchLemmas, doc = (type
 
   const allCardIds = [...new Set(Object.values(wordToCardIds).flat())];
 
-  if (allCardIds.length === 0) {
-    return { found: candidates.length, matched: 0 };
-  }
-
-  // Round trip 2: cardsInfo for all found card IDs
-  let cardsResponse;
-  try {
-    cardsResponse = await ankiRequest({
-      action: 'cardsInfo',
-      version: 6,
-      params: { cards: allCardIds },
-    });
-  } catch {
-    return { found: candidates.length, matched: 0, error: 'connection' };
-  }
-
   const cardIdToType = {};
-  if (cardsResponse.result) {
-    for (const card of cardsResponse.result) {
-      cardIdToType[card.cardId] = card.type;
+  if (allCardIds.length > 0) {
+    // Round trip 2: cardsInfo for all found card IDs
+    let cardsResponse;
+    try {
+      cardsResponse = await ankiRequest({
+        action: 'cardsInfo',
+        version: 6,
+        params: { cards: allCardIds },
+      });
+    } catch {
+      return { found: candidates.length, matched: 0, error: 'connection' };
+    }
+
+    if (cardsResponse.result) {
+      for (const card of cardsResponse.result) {
+        cardIdToType[card.cardId] = card.type;
+      }
     }
   }
 
   let matched = 0;
   for (const { span, word } of candidates) {
     const cardIds = wordToCardIds[lookupWord(word)];
-    if (!cardIds || cardIds.length === 0) continue;
+    if (!cardIds || cardIds.length === 0) {
+      span.classList.add('anki-unknown');
+      applyFurigana(span, 'anki-unknown', settings);
+      continue;
+    }
 
     const statusClass = cardTypeToStatus(cardIdToType[cardIds[0]] ?? 0);
     span.classList.add(statusClass);
     if (cardIds.length > 1) span.classList.add('anki-duplicate');
     applyFurigana(span, statusClass, settings);
     matched++;
+  }
+
+  for (const { span } of candidates) {
+    injectFurigana(span);
   }
 
   return { found: candidates.length, matched };
