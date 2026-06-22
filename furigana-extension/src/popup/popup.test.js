@@ -255,7 +255,7 @@ describe('popup.html structure — furiganaUnknown (issue #33 AC-28)', () => {
   beforeEach(async () => {
     const fs = await import('fs');
     const path = await import('path');
-    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'popup.html');
+    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', '..', '..', 'popup.html');
     const html = fs.readFileSync(htmlPath, 'utf8');
     doc = new JSDOM(html, { url: 'http://localhost/' }).window.document;
   });
@@ -351,7 +351,7 @@ describe('#scanBtn click (Issue #22)', () => {
   async function loadPopupWithFakeExt(fakeExt, settingsData = {}) {
     const doc = makePopupDoc();
     // Provide hasDictionary mock so popup.js's refreshDictStatus does not throw
-    vi.doMock('./dict-store.js', () => ({
+    vi.doMock('../shared/dict-store.js', () => ({
       hasDictionary: vi.fn().mockResolvedValue(false),
       saveDictionary: vi.fn().mockResolvedValue(undefined),
     }));
