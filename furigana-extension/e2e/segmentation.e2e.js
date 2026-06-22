@@ -287,7 +287,7 @@ test('AC-7+AC-8: raw text-node Japanese page gets anki-* class after runtime seg
   // Specifically: 日本語 is in Anki as type 2 (learned), so its span should carry
   // anki-learned (or whichever the pipeline assigns via cardTypeToStatus).
   await expect(
-    page.locator('#raw-para span').filter({ hasText: '日本語' }),
+    page.locator('#raw-para span').filter({ hasText: '日本語' }).first(),
   ).toHaveClass(/anki-learned/);
 
   await page.close();
@@ -612,13 +612,13 @@ test('AC-20: local mode — 日本語 (anki-learned) with furiganaLearned:false 
 
   // The span must carry anki-learned (日本語 is type 2 in AnkiConnect).
   await expect(
-    page.locator('#test-para-hide span').filter({ hasText: '日本語' }),
+    page.locator('#test-para-hide span').filter({ hasText: '日本語' }).first(),
   ).toHaveClass(/anki-learned/);
 
   // The span must also carry anki-hide-furigana because furiganaLearned is false.
   // This class is what the CSS rule `.anki-hide-furigana rt { visibility: hidden }` targets.
   await expect(
-    page.locator('#test-para-hide span').filter({ hasText: '日本語' }),
+    page.locator('#test-para-hide span').filter({ hasText: '日本語' }).first(),
   ).toHaveClass(/anki-hide-furigana/);
 
   // A <ruby> element must exist — injection must have run even though the reading is hidden.
