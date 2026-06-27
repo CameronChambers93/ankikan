@@ -2,6 +2,7 @@
   "name": "furigana-extension",
   "version": "1.0.0",
   "description": "AnkiKan browser extension",
+  "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@9.15.9",
   "scripts": {
