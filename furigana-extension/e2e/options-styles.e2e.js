@@ -81,7 +81,7 @@ async function clearStorage(page) {
 // AC1 — manifest.json declares options_ui pointing at options.html with open_in_tab
 // ---------------------------------------------------------------------------
 
-test('manifest.json declares options_ui with options.html and open_in_tab: true', async () => {
+test('T-6-001 manifest.json declares options_ui with options.html and open_in_tab: true', async () => {
   // The options_ui manifest key is required so Chrome knows to open options.html
   // as a tab rather than an inline popup, which prevents the OS colour picker from
   // dismissing the popup window. chrome.runtime.getManifest() is available from any
@@ -99,7 +99,7 @@ test('manifest.json declares options_ui with options.html and open_in_tab: true'
 // AC2 — options.html contains all global colour/opacity controls and #resetStylesBtn
 // ---------------------------------------------------------------------------
 
-test('options.html contains #global-bg-color', async () => {
+test('T-6-002 options.html contains #global-bg-color', async () => {
   // The options page must host the global background colour input that was formerly
   // in popup.html so users can change it without the popup being dismissed.
   const page = await openOptionsPage();
@@ -107,14 +107,14 @@ test('options.html contains #global-bg-color', async () => {
   await page.close();
 });
 
-test('options.html contains #global-outline-color', async () => {
+test('T-6-003 options.html contains #global-outline-color', async () => {
   // All colour inputs that trigger the OS picker must live on the full-tab options page.
   const page = await openOptionsPage();
   await expect(page.locator('#global-outline-color')).toBeVisible();
   await page.close();
 });
 
-test('options.html contains per-category colour inputs', async () => {
+test('T-6-004 options.html contains per-category colour inputs', async () => {
   // Per-category colour overrides must also be on the options page so none of the
   // colour inputs remain in the popup.
   const page = await openOptionsPage();
@@ -124,14 +124,14 @@ test('options.html contains per-category colour inputs', async () => {
   await page.close();
 });
 
-test('options.html contains #resetStylesBtn', async () => {
+test('T-6-005 options.html contains #resetStylesBtn', async () => {
   // The reset button must be co-located with the style controls it resets.
   const page = await openOptionsPage();
   await expect(page.locator('#resetStylesBtn')).toBeVisible();
   await page.close();
 });
 
-test('options.html contains per-category enable checkboxes', async () => {
+test('T-6-006 options.html contains per-category enable checkboxes', async () => {
   // The enable checkboxes gate whether per-category backgroundColor is saved; they
   // must be accessible on the options page alongside their paired colour inputs.
   const page = await openOptionsPage();
@@ -145,7 +145,7 @@ test('options.html contains per-category enable checkboxes', async () => {
 // AC3 — popup.html has no colour inputs, retains #scanBtn, and gains #openOptionsBtn
 // ---------------------------------------------------------------------------
 
-test('popup.html has no <input type="color"> elements', async () => {
+test('T-6-007 popup.html has no <input type="color"> elements', async () => {
   // Removing all colour inputs from the popup prevents the OS colour picker from
   // stealing focus and closing the popup window on Windows.
   const popup = await openPopup();
@@ -153,14 +153,14 @@ test('popup.html has no <input type="color"> elements', async () => {
   await popup.close();
 });
 
-test('popup.html still contains #scanBtn', async () => {
+test('T-6-008 popup.html still contains #scanBtn', async () => {
   // The scan button is a core popup action and must not be moved to the options page.
   const popup = await openPopup();
   await expect(popup.locator('#scanBtn')).toBeVisible();
   await popup.close();
 });
 
-test('popup.html contains #openOptionsBtn', async () => {
+test('T-6-009 popup.html contains #openOptionsBtn', async () => {
   // A dedicated button lets users reach the options page from the popup without
   // needing to know about the extensions management page.
   const popup = await openPopup();
@@ -172,7 +172,7 @@ test('popup.html contains #openOptionsBtn', async () => {
 // AC4 — Clicking #openOptionsBtn opens a new tab to the options page URL
 // ---------------------------------------------------------------------------
 
-test('clicking #openOptionsBtn opens a new tab pointing at options.html', async () => {
+test('T-6-010 clicking #openOptionsBtn opens a new tab pointing at options.html', async () => {
   // chrome.runtime.openOptionsPage() must be called when the button is clicked;
   // the result is a new tab navigating to the declared options_ui page.
   const popup = await openPopup();
@@ -193,7 +193,7 @@ test('clicking #openOptionsBtn opens a new tab pointing at options.html', async 
 // AC5 — Setting #global-bg-color on the options page persists to storage
 // ---------------------------------------------------------------------------
 
-test('global-bg-color value persists after closing and reopening options page', async () => {
+test('T-6-011 global-bg-color value persists after closing and reopening options page', async () => {
   // Storage persistence is the primary correctness guarantee for the options page:
   // a user-chosen colour must survive a tab close and be restored on the next visit.
   const page = await openOptionsPage();
@@ -218,7 +218,7 @@ test('global-bg-color value persists after closing and reopening options page', 
 // AC6 — Checking #unlearned-bg-color-enabled and setting colour persists
 // ---------------------------------------------------------------------------
 
-test('unlearned-bg-color persists when its enable checkbox is checked', async () => {
+test('T-6-012 unlearned-bg-color persists when its enable checkbox is checked', async () => {
   // The checkbox guards whether the colour is included in the saved payload.
   // Both the checkbox state and the colour value must survive a page reload.
   const page = await openOptionsPage();
@@ -245,7 +245,7 @@ test('unlearned-bg-color persists when its enable checkbox is checked', async ()
 // AC7 — Unchecking #unlearned-bg-color-enabled removes backgroundColor from storage
 // ---------------------------------------------------------------------------
 
-test('unchecking unlearned-bg-color-enabled removes backgroundColor from storage', async () => {
+test('T-6-013 unchecking unlearned-bg-color-enabled removes backgroundColor from storage', async () => {
   // When a user removes a per-category colour override, the storage entry must be
   // cleaned up so the global default is used instead of a stale value.
   const page = await openOptionsPage();
@@ -273,7 +273,7 @@ test('unchecking unlearned-bg-color-enabled removes backgroundColor from storage
 // AC8 — Reset button restores defaults and unchecks per-category checkboxes
 // ---------------------------------------------------------------------------
 
-test('resetStylesBtn unchecks all per-category enable checkboxes and restores storage defaults', async () => {
+test('T-6-014 resetStylesBtn unchecks all per-category enable checkboxes and restores storage defaults', async () => {
   // After a reset, the options page must represent "no category overrides" so that
   // subsequent style saves do not write spurious per-category backgroundColor values.
   const page = await openOptionsPage();

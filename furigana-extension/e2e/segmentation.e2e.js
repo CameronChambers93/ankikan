@@ -230,7 +230,7 @@ async function clearDictInIndexedDB(page) {
 // so no spans are created and AnkiConnect is never queried for this page.
 // ---------------------------------------------------------------------------
 
-test('AC-7+AC-8: raw text-node Japanese page gets anki-* class after runtime segmentation', async () => {
+test('T-16-017 AC-7+AC-8: raw text-node Japanese page gets anki-* class after runtime segmentation', async () => {
   // Runtime segmentation is the only path that produces word-level spans on pages
   // that do not pre-wrap their text. Without it, scanPage finds no spans and zero
   // Anki lookups occur. This test verifies the full pipeline: segment → lookup → annotate.
@@ -302,7 +302,7 @@ test('AC-7+AC-8: raw text-node Japanese page gets anki-* class after runtime seg
 // No new spans should be inserted inside the existing ones (no double-wrap).
 // ---------------------------------------------------------------------------
 
-test('AC-9: pre-annotated NHK-style page highlights existing spans without re-wrapping them', async () => {
+test('T-16-018 AC-9: pre-annotated NHK-style page highlights existing spans without re-wrapping them', async () => {
   // If segmentAndWrap ran on a pre-annotated page it would try to tokenize text nodes
   // that are already inside <span data-lemma> elements, potentially double-wrapping them.
   // The guard (check for span[data-lemma] before calling segmentAndWrap) must prevent this.
@@ -367,7 +367,7 @@ test('AC-9: pre-annotated NHK-style page highlights existing spans without re-wr
 // (b) the scan pipeline would not tokenize anyway.
 // ---------------------------------------------------------------------------
 
-test('AC-13: lemmaMode off — raw text page gets no anki-* classes (segmentation did not run)', async () => {
+test('T-16-019 AC-13: lemmaMode off — raw text page gets no anki-* classes (segmentation did not run)', async () => {
   // In off mode the content script must not call segmentAndWrap regardless of whether
   // a dictionary is available. The page should be left completely unannotated.
   const popup = await openPopup();
@@ -419,7 +419,7 @@ test('AC-13: lemmaMode off — raw text page gets no anki-* classes (segmentatio
 // absence of an uncaught exception, not the presence of anki-* classes.
 // ---------------------------------------------------------------------------
 
-test('graceful degradation: local mode with no dict seeded — no fatal JS error, scan completes', async () => {
+test('T-16-020 graceful degradation: local mode with no dict seeded — no fatal JS error, scan completes', async () => {
   // The content script's try/catch around buildKuromoji must absorb the missing-file
   // error gracefully. An uncaught exception here would break all future message-handler
   // calls on the page (e.g. the popup's manual scan button).
@@ -488,7 +488,7 @@ test('graceful degradation: local mode with no dict seeded — no fatal JS error
 // furigana because furiganaUnknown defaults to true (issue #33 AC behaviour).
 // ---------------------------------------------------------------------------
 
-test('AC-19: local mode — plain 食べる with no pre-existing ruby gets <ruby>/<rt> injected', async () => {
+test('T-31-022 AC-19: local mode — plain 食べる with no pre-existing ruby gets <ruby>/<rt> injected', async () => {
   // Without furigana injection the user sees 食べる with no pronunciation aid.
   // This is the core AC-19 behaviour: injectFurigana must synthesise <ruby><rt>
   // from kuromoji's reading field for every span that lacks pre-existing ruby markup.
@@ -569,7 +569,7 @@ test('AC-19: local mode — plain 食べる with no pre-existing ruby gets <ruby
 // This distinguishes "furigana synthesised and suppressed" from "furigana never built".
 // ---------------------------------------------------------------------------
 
-test('AC-20: local mode — 日本語 (anki-learned) with furiganaLearned:false has ruby present but rt visibility hidden', async () => {
+test('T-31-023 AC-20: local mode — 日本語 (anki-learned) with furiganaLearned:false has ruby present but rt visibility hidden', async () => {
   // The user's choice to hide furigana on learned words should suppress the <rt> via
   // CSS (visibility:hidden via .anki-hide-furigana rt rule), not prevent injection.
   // If the <ruby> were absent entirely the user could not toggle furigana back on
@@ -654,7 +654,7 @@ test('AC-20: local mode — 日本語 (anki-learned) with furiganaLearned:false 
 // elements are expected.
 // ---------------------------------------------------------------------------
 
-test('AC-21a: server mode — no extension-injected <ruby> elements on raw-text page', async () => {
+test('T-31-024 AC-21a: server mode — no extension-injected <ruby> elements on raw-text page', async () => {
   // In server mode the extension queries AnkiConnect for card status but does NOT
   // run the local kuromoji tokeniser. Without kuromoji readings there is no data
   // from which to synthesise furigana, so injectFurigana must not be called and
@@ -711,7 +711,7 @@ test('AC-21a: server mode — no extension-injected <ruby> elements on raw-text 
   await page.close();
 });
 
-test('AC-21b: off mode — no extension-injected <ruby> elements on raw-text page', async () => {
+test('T-31-025 AC-21b: off mode — no extension-injected <ruby> elements on raw-text page', async () => {
   // In off mode the content script does not initialise kuromoji, does not run
   // segmentAndWrap, and does not call scanPage. The page must be left completely
   // unmodified: no <span> injected, no <ruby> injected, no anki-* classes.

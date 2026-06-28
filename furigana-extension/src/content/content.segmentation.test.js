@@ -47,7 +47,7 @@ function makeRoot(html) {
 // ---------------------------------------------------------------------------
 
 describe('segmentAndWrap — AC-1: Japanese tokens are wrapped in <span>', () => {
-  it('test_japanese_token_text_equals_surface_form', () => {
+  it('T-16-001 test_japanese_token_text_equals_surface_form', () => {
     // Each span must reproduce the exact surface form so downstream Anki lookups
     // query the correct inflected form as it appears in the source text.
     const tokenize = vi.fn().mockReturnValue([
@@ -61,7 +61,7 @@ describe('segmentAndWrap — AC-1: Japanese tokens are wrapped in <span>', () =>
     expect(spans[0].textContent).toBe('日本語');
   });
 
-  it('test_conjugated_token_sets_data_lemma_to_basic_form', () => {
+  it('T-16-002 test_conjugated_token_sets_data_lemma_to_basic_form', () => {
     // When basic_form differs from surface_form the span must carry data-lemma
     // so the Anki lookup can search the dictionary form (走る) rather than the
     // inflected surface (走った).
@@ -76,7 +76,7 @@ describe('segmentAndWrap — AC-1: Japanese tokens are wrapped in <span>', () =>
     expect(span.dataset.lemma).toBe('走る');
   });
 
-  it('test_token_with_basic_form_equal_to_surface_form_has_no_data_lemma', () => {
+  it('T-16-003 test_token_with_basic_form_equal_to_surface_form_has_no_data_lemma', () => {
     // When basic_form === surface_form the span must NOT carry data-lemma;
     // setting it redundantly would clutter the DOM and confuse downstream code.
     const tokenize = vi.fn().mockReturnValue([
@@ -90,7 +90,7 @@ describe('segmentAndWrap — AC-1: Japanese tokens are wrapped in <span>', () =>
     expect(span.dataset.lemma).toBeUndefined();
   });
 
-  it('test_token_with_basic_form_asterisk_has_no_data_lemma', () => {
+  it('T-16-004 test_token_with_basic_form_asterisk_has_no_data_lemma', () => {
     // Kuromoji uses '*' as a sentinel for "unknown / not applicable"; setting
     // data-lemma="*" would produce nonsense Anki lookups and must be suppressed.
     const tokenize = vi.fn().mockReturnValue([
@@ -104,7 +104,7 @@ describe('segmentAndWrap — AC-1: Japanese tokens are wrapped in <span>', () =>
     expect(span.dataset.lemma).toBeUndefined();
   });
 
-  it('test_return_value_equals_number_of_spans_inserted', () => {
+  it('T-16-005 test_return_value_equals_number_of_spans_inserted', () => {
     // The integer return value is used by callers to decide whether any work
     // was done (e.g. to avoid redundant style refreshes).
     const tokenize = vi.fn().mockReturnValue([
@@ -125,7 +125,7 @@ describe('segmentAndWrap — AC-1: Japanese tokens are wrapped in <span>', () =>
 // ---------------------------------------------------------------------------
 
 describe('segmentAndWrap — AC-2: anki-* spans are skipped (idempotency guard)', () => {
-  it('test_anki_unlearned_span_text_node_is_not_re_wrapped', () => {
+  it('T-16-006 test_anki_unlearned_span_text_node_is_not_re_wrapped', () => {
     // If a span with class anki-unlearned were descended into, a second call
     // would nest new spans inside it, breaking the highlight styling.
     const tokenize = vi.fn().mockReturnValue([
@@ -141,7 +141,7 @@ describe('segmentAndWrap — AC-2: anki-* spans are skipped (idempotency guard)'
     expect(ankiSpan.childNodes[0].textContent).toBe('日本語');
   });
 
-  it('test_anki_learning_span_text_node_is_not_re_wrapped', () => {
+  it('T-16-007 test_anki_learning_span_text_node_is_not_re_wrapped', () => {
     // Same protection as for anki-unlearned; each anki-* class must be guarded
     // independently in case the check is implemented per-class.
     const tokenize = vi.fn().mockReturnValue([
@@ -155,7 +155,7 @@ describe('segmentAndWrap — AC-2: anki-* spans are skipped (idempotency guard)'
     expect(ankiSpan.childNodes[0].nodeType).toBe(Node.TEXT_NODE);
   });
 
-  it('test_anki_learned_span_text_node_is_not_re_wrapped', () => {
+  it('T-16-008 test_anki_learned_span_text_node_is_not_re_wrapped', () => {
     // Same protection for anki-learned.
     const tokenize = vi.fn().mockReturnValue([
       { surface_form: '言語', basic_form: '言語' },
@@ -174,7 +174,7 @@ describe('segmentAndWrap — AC-2: anki-* spans are skipped (idempotency guard)'
 // ---------------------------------------------------------------------------
 
 describe('segmentAndWrap — AC-3: inert element content is not touched', () => {
-  it('test_script_element_content_receives_no_spans', () => {
+  it('T-16-009 test_script_element_content_receives_no_spans', () => {
     // Script content is never user-visible text; injecting spans would break
     // the JavaScript syntax.
     const tokenize = vi.fn();
@@ -185,7 +185,7 @@ describe('segmentAndWrap — AC-3: inert element content is not touched', () => 
     expect(tokenize).not.toHaveBeenCalled();
   });
 
-  it('test_style_element_content_receives_no_spans', () => {
+  it('T-16-010 test_style_element_content_receives_no_spans', () => {
     // Style content is CSS text; injecting spans would corrupt the stylesheet.
     const tokenize = vi.fn();
     const root = makeRoot('<div><style>.日本語 { color: red; }</style></div>');
@@ -195,7 +195,7 @@ describe('segmentAndWrap — AC-3: inert element content is not touched', () => 
     expect(tokenize).not.toHaveBeenCalled();
   });
 
-  it('test_textarea_element_content_receives_no_spans', () => {
+  it('T-16-011 test_textarea_element_content_receives_no_spans', () => {
     // Textarea content is editable user input; inserting element nodes inside
     // it changes its text value and would corrupt form data.
     const tokenize = vi.fn();
@@ -212,7 +212,7 @@ describe('segmentAndWrap — AC-3: inert element content is not touched', () => 
 // ---------------------------------------------------------------------------
 
 describe('segmentAndWrap — AC-4: calling twice produces the same result', () => {
-  it('test_second_call_does_not_insert_additional_spans', () => {
+  it('T-16-012 test_second_call_does_not_insert_additional_spans', () => {
     // If the function is not idempotent, a page listener firing twice would
     // nest spans inside spans, multiplying markup on every re-run.
     const tokenize = vi.fn().mockReturnValue([
@@ -236,7 +236,7 @@ describe('segmentAndWrap — AC-4: calling twice produces the same result', () =
 // ---------------------------------------------------------------------------
 
 describe('segmentAndWrap — AC-5: mixed Japanese/non-Japanese text nodes', () => {
-  it('test_only_japanese_tokens_are_wrapped_in_mixed_text', () => {
+  it('T-16-013 test_only_japanese_tokens_are_wrapped_in_mixed_text', () => {
     // English runs that happen to surround Japanese text must remain as plain
     // text nodes; wrapping them in spans would incorrectly make them Anki
     // lookup candidates.
@@ -257,7 +257,7 @@ describe('segmentAndWrap — AC-5: mixed Japanese/non-Japanese text nodes', () =
     expect(root.textContent).toContain(' world');
   });
 
-  it('test_non_japanese_only_root_returns_zero_and_inserts_no_spans', () => {
+  it('T-16-014 test_non_japanese_only_root_returns_zero_and_inserts_no_spans', () => {
     // A root containing only ASCII text must short-circuit cleanly and return 0
     // rather than calling tokenize on non-Japanese content.
     const tokenize = vi.fn().mockReturnValue([
@@ -276,7 +276,7 @@ describe('segmentAndWrap — AC-5: mixed Japanese/non-Japanese text nodes', () =
 // ---------------------------------------------------------------------------
 
 describe('segmentAndWrap — AC-6: ruby / rt / rp elements are left intact', () => {
-  it('test_rt_content_is_not_wrapped_in_spans', () => {
+  it('T-16-015 test_rt_content_is_not_wrapped_in_spans', () => {
     // The <rt> element holds the phonetic reading of a kanji base.  Injecting
     // spans inside it would break browser ruby rendering and double-annotate
     // furigana as if they were independent vocabulary items.
@@ -301,7 +301,7 @@ describe('segmentAndWrap — AC-6: ruby / rt / rp elements are left intact', () 
 // ---------------------------------------------------------------------------
 
 describe('segmentAndWrap — edge cases', () => {
-  it('test_empty_root_returns_zero_and_does_not_throw', () => {
+  it('T-16-016 test_empty_root_returns_zero_and_does_not_throw', () => {
     // An empty container must be handled gracefully; returning anything other
     // than 0 or throwing would signal that the walk is mis-counting.
     const tokenize = vi.fn();
@@ -323,7 +323,7 @@ describe('segmentAndWrap — edge cases', () => {
 // ===========================================================================
 
 describe('segmentAndWrap — issue #31 AC-1: token with reading sets span.dataset.reading', () => {
-  it('test_token_with_katakana_reading_sets_dataset_reading', () => {
+  it('T-31-001 test_token_with_katakana_reading_sets_dataset_reading', () => {
     // dataset.reading must carry the raw kuromoji reading field so that
     // injectFurigana can later synthesise <ruby> markup from it; if this
     // attribute is absent, furigana injection has nothing to work with.
@@ -340,7 +340,7 @@ describe('segmentAndWrap — issue #31 AC-1: token with reading sets span.datase
 });
 
 describe('segmentAndWrap — issue #31 AC-2: tokens with absent/empty/sentinel reading do NOT set dataset.reading', () => {
-  it('test_token_with_undefined_reading_does_not_set_dataset_reading', () => {
+  it('T-31-002 test_token_with_undefined_reading_does_not_set_dataset_reading', () => {
     // An undefined reading field means kuromoji could not determine the
     // pronunciation; setting dataset.reading to undefined/string would
     // cause injectFurigana to inject garbage <rt> content.
@@ -355,7 +355,7 @@ describe('segmentAndWrap — issue #31 AC-2: tokens with absent/empty/sentinel r
     expect(span.dataset.reading).toBeUndefined();
   });
 
-  it('test_token_with_empty_reading_does_not_set_dataset_reading', () => {
+  it('T-31-003 test_token_with_empty_reading_does_not_set_dataset_reading', () => {
     // An empty string reading is equally useless for furigana generation
     // and must not appear in the DOM as dataset.reading="".
     const tokenize = vi.fn().mockReturnValue([
@@ -369,7 +369,7 @@ describe('segmentAndWrap — issue #31 AC-2: tokens with absent/empty/sentinel r
     expect(span.dataset.reading).toBeUndefined();
   });
 
-  it('test_token_with_asterisk_reading_does_not_set_dataset_reading', () => {
+  it('T-31-004 test_token_with_asterisk_reading_does_not_set_dataset_reading', () => {
     // Kuromoji emits '*' for unknown readings, identical to the basic_form
     // sentinel; treating it as a real reading would produce <rt>*</rt>.
     const tokenize = vi.fn().mockReturnValue([
@@ -385,7 +385,7 @@ describe('segmentAndWrap — issue #31 AC-2: tokens with absent/empty/sentinel r
 });
 
 describe('segmentAndWrap — issue #31 AC-3: kana-only surface forms do NOT set dataset.reading', () => {
-  it('test_kana_only_surface_form_does_not_set_dataset_reading', () => {
+  it('T-31-005 test_kana_only_surface_form_does_not_set_dataset_reading', () => {
     // A surface form that is already pure kana needs no furigana annotation
     // because its pronunciation is already visible in the text; setting
     // dataset.reading would cause injectFurigana to wrap kana in <ruby>
@@ -401,7 +401,7 @@ describe('segmentAndWrap — issue #31 AC-3: kana-only surface forms do NOT set 
     expect(span.dataset.reading).toBeUndefined();
   });
 
-  it('test_katakana_only_surface_form_does_not_set_dataset_reading', () => {
+  it('T-31-006 test_katakana_only_surface_form_does_not_set_dataset_reading', () => {
     // Katakana-only surfaces are also self-pronouncing and must not receive
     // a redundant furigana annotation.
     const tokenize = vi.fn().mockReturnValue([
@@ -421,7 +421,7 @@ describe('segmentAndWrap — issue #31 AC-3: kana-only surface forms do NOT set 
 // ===========================================================================
 
 describe('katakanaToHiragana — issue #31 AC-4: basic katakana-to-hiragana conversion', () => {
-  it('test_katakana_string_converts_to_hiragana', () => {
+  it('T-31-007 test_katakana_string_converts_to_hiragana', () => {
     // Reading fields from kuromoji arrive as katakana; they must be converted
     // to hiragana before being placed in <rt> because native Japanese furigana
     // convention uses hiragana, not katakana.
@@ -430,7 +430,7 @@ describe('katakanaToHiragana — issue #31 AC-4: basic katakana-to-hiragana conv
 });
 
 describe('katakanaToHiragana — issue #31 AC-5: already-hiragana input is returned unchanged', () => {
-  it('test_hiragana_input_returned_unchanged', () => {
+  it('T-31-008 test_hiragana_input_returned_unchanged', () => {
     // Hiragana codepoints are below the katakana range; they must not be
     // shifted and must pass through the function without modification.
     expect(katakanaToHiragana('たべる')).toBe('たべる');
@@ -438,7 +438,7 @@ describe('katakanaToHiragana — issue #31 AC-5: already-hiragana input is retur
 });
 
 describe('katakanaToHiragana — issue #31 AC-6: mixed katakana and non-katakana string', () => {
-  it('test_only_katakana_codepoints_converted_kanji_untouched', () => {
+  it('T-31-009 test_only_katakana_codepoints_converted_kanji_untouched', () => {
     // A mixed string containing both katakana and kanji must have only the
     // katakana codepoints shifted; kanji lie outside the katakana Unicode block
     // and must emerge from the function byte-for-byte identical.
@@ -451,7 +451,7 @@ describe('katakanaToHiragana — issue #31 AC-6: mixed katakana and non-katakana
 // ===========================================================================
 
 describe('splitKanjiKana — issue #31 AC-7: mixed kanji+kana string produces alternating runs', () => {
-  it('test_mixed_string_splits_into_kanji_and_kana_runs', () => {
+  it('T-31-010 test_mixed_string_splits_into_kanji_and_kana_runs', () => {
     // Furigana injection must annotate only the kanji characters; splitting
     // the surface form into kanji vs kana runs lets injectFurigana pair each
     // kanji run with its corresponding portion of the reading.
@@ -463,7 +463,7 @@ describe('splitKanjiKana — issue #31 AC-7: mixed kanji+kana string produces al
 });
 
 describe('splitKanjiKana — issue #31 AC-8: kana-only string produces a single non-kanji run', () => {
-  it('test_kana_only_string_produces_single_non_kanji_run', () => {
+  it('T-31-011 test_kana_only_string_produces_single_non_kanji_run', () => {
     // A surface form with no kanji must produce a single segment so callers
     // can quickly determine that no <ruby> injection is needed.
     expect(splitKanjiKana('たべる')).toEqual([
@@ -473,7 +473,7 @@ describe('splitKanjiKana — issue #31 AC-8: kana-only string produces a single 
 });
 
 describe('splitKanjiKana — issue #31 AC-9: all-kanji string produces a single kanji run', () => {
-  it('test_all_kanji_string_produces_single_kanji_run', () => {
+  it('T-31-012 test_all_kanji_string_produces_single_kanji_run', () => {
     // A surface form that is entirely kanji must produce a single kanji segment
     // covering the whole string so the full reading can be placed in one <rt>.
     expect(splitKanjiKana('食事')).toEqual([
@@ -487,7 +487,7 @@ describe('splitKanjiKana — issue #31 AC-9: all-kanji string produces a single 
 // ===========================================================================
 
 describe('injectFurigana — issue #31 AC-10: kanji+kana surface gets ruby on the kanji run', () => {
-  it('test_mixed_surface_form_injects_ruby_on_kanji_portion_only', () => {
+  it('T-31-013 test_mixed_surface_form_injects_ruby_on_kanji_portion_only', () => {
     // The injected <ruby> must wrap only the kanji portion '食' with the
     // corresponding hiragana slice 'た', leaving the trailing kana 'べる'
     // as plain text — matching how human-authored furigana appears in print.
@@ -500,7 +500,7 @@ describe('injectFurigana — issue #31 AC-10: kanji+kana surface gets ruby on th
 });
 
 describe('injectFurigana — issue #31 AC-11: span already containing <ruby> is not modified', () => {
-  it('test_span_with_existing_ruby_child_is_left_unmodified', () => {
+  it('T-31-014 test_span_with_existing_ruby_child_is_left_unmodified', () => {
     // If the span already has author-provided ruby markup, injecting additional
     // <ruby> elements would corrupt the existing furigana; the function must
     // detect the presence of any <ruby> child and bail out.
@@ -513,7 +513,7 @@ describe('injectFurigana — issue #31 AC-11: span already containing <ruby> is 
 });
 
 describe('injectFurigana — issue #31 AC-12: span without dataset.reading is not modified', () => {
-  it('test_span_without_dataset_reading_left_unmodified', () => {
+  it('T-31-015 test_span_without_dataset_reading_left_unmodified', () => {
     // Without a reading there is nothing to put in <rt>; the function must
     // leave the span's DOM unchanged to avoid injecting empty ruby tags.
     const span = document.createElement('span');
@@ -525,7 +525,7 @@ describe('injectFurigana — issue #31 AC-12: span without dataset.reading is no
 });
 
 describe('injectFurigana — issue #31 AC-13: kana-only textContent produces no <ruby>', () => {
-  it('test_kana_only_content_produces_no_ruby_element', () => {
+  it('T-31-016 test_kana_only_content_produces_no_ruby_element', () => {
     // Pure kana surfaces need no furigana; if injectFurigana wraps them in
     // <ruby> the page would display redundant double-annotation visible to the user.
     const span = document.createElement('span');
@@ -537,7 +537,7 @@ describe('injectFurigana — issue #31 AC-13: kana-only textContent produces no 
 });
 
 describe('injectFurigana — issue #31 AC-14: all-kanji surface wraps entire word in one ruby', () => {
-  it('test_all_kanji_surface_wraps_whole_word_in_single_ruby', () => {
+  it('T-31-017 test_all_kanji_surface_wraps_whole_word_in_single_ruby', () => {
     // When the surface form contains only kanji the entire word is a single
     // kanji run and the complete hiragana reading belongs in one <rt>; splitting
     // it into per-character rubies would be incorrect and hard to read.

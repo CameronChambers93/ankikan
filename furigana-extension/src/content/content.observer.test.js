@@ -22,7 +22,7 @@ import { collectAddedRoots, debounce } from './content.observer.js';
 // ---------------------------------------------------------------------------
 
 describe('collectAddedRoots — qualifying element nodes are returned', () => {
-  it('test_div_element_in_added_nodes_is_included_in_result_set', () => {
+  it('T-18-001 test_div_element_in_added_nodes_is_included_in_result_set', () => {
     // A plain <div> is the prototypical container for dynamically injected
     // content; it must be returned so segmentAndWrap can be applied to it.
     const div = document.createElement('div');
@@ -35,7 +35,7 @@ describe('collectAddedRoots — qualifying element nodes are returned', () => {
     expect(result.has(div)).toBe(true);
   });
 
-  it('test_multiple_records_with_qualifying_elements_are_all_aggregated', () => {
+  it('T-18-002 test_multiple_records_with_qualifying_elements_are_all_aggregated', () => {
     // A MutationObserver fires one record per mutation; multiple mutations in
     // a single callback must each contribute their elements to one unified Set.
     const div1 = document.createElement('div');
@@ -52,7 +52,7 @@ describe('collectAddedRoots — qualifying element nodes are returned', () => {
     expect(result.size).toBe(2);
   });
 
-  it('test_mixed_nodes_in_one_record_include_only_qualifying_element', () => {
+  it('T-18-003 test_mixed_nodes_in_one_record_include_only_qualifying_element', () => {
     // A single MutationRecord can carry a mix of element, text, and span nodes;
     // only the element that is not a SPAN should make it into the result set.
     const div = document.createElement('div');
@@ -67,7 +67,7 @@ describe('collectAddedRoots — qualifying element nodes are returned', () => {
     expect(result.size).toBe(1);
   });
 
-  it('test_empty_records_array_returns_empty_set', () => {
+  it('T-18-004 test_empty_records_array_returns_empty_set', () => {
     // When no mutations have occurred (empty records array) the function must
     // return an empty Set rather than throw or return undefined.
     const result = collectAddedRoots([]);
@@ -82,7 +82,7 @@ describe('collectAddedRoots — qualifying element nodes are returned', () => {
 // ---------------------------------------------------------------------------
 
 describe('collectAddedRoots — AC-4: non-element nodes are excluded', () => {
-  it('test_text_node_only_record_returns_empty_set', () => {
+  it('T-18-005 test_text_node_only_record_returns_empty_set', () => {
     // Text nodes (nodeType 3) are never re-segmented directly; only their
     // Element parent is enqueued so segmentAndWrap can walk the full subtree.
     const text = document.createTextNode('新しいコンテンツ');
@@ -93,7 +93,7 @@ describe('collectAddedRoots — AC-4: non-element nodes are excluded', () => {
     expect(result.size).toBe(0);
   });
 
-  it('test_comment_node_only_record_returns_empty_set', () => {
+  it('T-18-006 test_comment_node_only_record_returns_empty_set', () => {
     // Comment nodes (nodeType 8) are invisible markup; including them would
     // cause segmentAndWrap to attempt to walk a non-element node.
     const comment = document.createComment('動的コンテンツ');
@@ -104,7 +104,7 @@ describe('collectAddedRoots — AC-4: non-element nodes are excluded', () => {
     expect(result.size).toBe(0);
   });
 
-  it('test_record_with_text_and_comment_nodes_only_returns_empty_set', () => {
+  it('T-18-007 test_record_with_text_and_comment_nodes_only_returns_empty_set', () => {
     // A record with multiple non-element nodes must still produce an empty Set;
     // the filter must apply per-node and not relax when there are many nodes.
     const text = document.createTextNode('追加されたテキスト');
@@ -122,7 +122,7 @@ describe('collectAddedRoots — AC-4: non-element nodes are excluded', () => {
 // ---------------------------------------------------------------------------
 
 describe('collectAddedRoots — AC-5: SPAN elements are excluded', () => {
-  it('test_span_only_added_node_returns_empty_set', () => {
+  it('T-18-008 test_span_only_added_node_returns_empty_set', () => {
     // The observer fires when segmentAndWrap inserts its own <span> elements;
     // including those spans would create an infinite re-segmentation loop.
     const span = document.createElement('span');
@@ -134,7 +134,7 @@ describe('collectAddedRoots — AC-5: SPAN elements are excluded', () => {
     expect(result.size).toBe(0);
   });
 
-  it('test_multiple_spans_in_added_nodes_are_all_excluded', () => {
+  it('T-18-009 test_multiple_spans_in_added_nodes_are_all_excluded', () => {
     // Multiple self-inserted spans from one segmentAndWrap pass must all be
     // ignored so the debounced callback does not re-trigger segmentation.
     const span1 = document.createElement('span');
@@ -146,7 +146,7 @@ describe('collectAddedRoots — AC-5: SPAN elements are excluded', () => {
     expect(result.size).toBe(0);
   });
 
-  it('test_span_with_class_is_excluded_regardless_of_class', () => {
+  it('T-18-010 test_span_with_class_is_excluded_regardless_of_class', () => {
     // Even a span carrying anki-* classes is a SPAN; the check is on nodeName,
     // not class, so every span regardless of attributes must be filtered out.
     const span = document.createElement('span');
@@ -168,7 +168,7 @@ describe('debounce — AC-6: rapid calls within delay result in one invocation',
     vi.useRealTimers();
   });
 
-  it('test_fn_is_not_called_before_delay_elapses', () => {
+  it('T-18-011 test_fn_is_not_called_before_delay_elapses', () => {
     // The whole point of debouncing is to suppress calls while events are
     // still arriving; fn must be silent until the trailing edge fires.
     vi.useFakeTimers();
@@ -183,7 +183,7 @@ describe('debounce — AC-6: rapid calls within delay result in one invocation',
     expect(fn).not.toHaveBeenCalled();
   });
 
-  it('test_fn_called_exactly_once_after_delay_following_rapid_burst', () => {
+  it('T-18-012 test_fn_called_exactly_once_after_delay_following_rapid_burst', () => {
     // N rapid invocations within the delay window must collapse to exactly one
     // call; calling fn multiple times would re-segment the same nodes N times.
     vi.useFakeTimers();
@@ -201,7 +201,7 @@ describe('debounce — AC-6: rapid calls within delay result in one invocation',
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it('test_single_call_fires_fn_after_delay', () => {
+  it('T-18-013 test_single_call_fires_fn_after_delay', () => {
     // A single call with no subsequent calls within the window must still fire
     // fn — debounce must not suppress isolated calls permanently.
     vi.useFakeTimers();
@@ -214,7 +214,7 @@ describe('debounce — AC-6: rapid calls within delay result in one invocation',
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it('test_second_burst_after_first_fires_fn_a_second_time', () => {
+  it('T-18-014 test_second_burst_after_first_fires_fn_a_second_time', () => {
     // The debounced wrapper must be reusable: after the first burst settles and
     // fires fn, a fresh burst after the delay must also eventually fire fn once.
     vi.useFakeTimers();
@@ -234,7 +234,7 @@ describe('debounce — AC-6: rapid calls within delay result in one invocation',
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
-  it('test_most_recent_call_arguments_are_passed_to_fn', () => {
+  it('T-18-015 test_most_recent_call_arguments_are_passed_to_fn', () => {
     // The observer callback receives the mutations array as its argument;
     // debounce must forward the last call's arguments, not the first call's.
     vi.useFakeTimers();
@@ -250,7 +250,7 @@ describe('debounce — AC-6: rapid calls within delay result in one invocation',
     expect(fn).toHaveBeenCalledWith('third');
   });
 
-  it('test_fn_not_called_if_delay_has_not_fully_elapsed', () => {
+  it('T-18-016 test_fn_not_called_if_delay_has_not_fully_elapsed', () => {
     // Advancing time to just before the delay must not trigger fn; the
     // trailing edge fires only when the full delay has elapsed.
     vi.useFakeTimers();

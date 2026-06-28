@@ -230,7 +230,7 @@ const EMPTY_FIXTURE_HTML = `<!DOCTYPE html>
 // the injected content stays as a raw text node and receives no anki-* class.
 // ---------------------------------------------------------------------------
 
-test('AC-1: dynamically injected Japanese text receives anki-* class without a page reload', async () => {
+test('T-18-017 AC-1: dynamically injected Japanese text receives anki-* class without a page reload', async () => {
   // Without the observer, content injected after document_idle is never segmented
   // or scanned.  This test verifies the full pipeline fires on DOM mutation:
   // observer fires → debounce settles → segmentAndWrap wraps new subtree →
@@ -293,7 +293,7 @@ test('AC-1: dynamically injected Japanese text receives anki-* class without a p
 // injected divs receive any annotation at all.
 // ---------------------------------------------------------------------------
 
-test('AC-2: burst of rapid mutations annotates content exactly once with no nested span wrapping', async () => {
+test('T-18-018 AC-2: burst of rapid mutations annotates content exactly once with no nested span wrapping', async () => {
   // Multiple DOM mutations within the debounce window must be batched into one
   // re-segmentation call.  If the observer called segmentAndWrap per mutation instead
   // of debouncing, the first segmentAndWrap would produce <span> nodes, then a second
@@ -371,7 +371,7 @@ test('AC-2: burst of rapid mutations annotates content exactly once with no nest
 // an infinite-loop check), which fails when the observer is missing.
 // ---------------------------------------------------------------------------
 
-test('AC-3: span count inside injected subtree is bounded and stable after debounce settles', async () => {
+test('T-18-019 AC-3: span count inside injected subtree is bounded and stable after debounce settles', async () => {
   // An infinite self-re-triggering loop would manifest as an ever-growing span count
   // (each observer callback wraps already-wrapped spans into more spans).  We assert
   // the count is non-zero (segmentation ran at all) and does not grow between two
@@ -444,7 +444,7 @@ test('AC-3: span count inside injected subtree is bounded and stable after debou
 // pass — the gate must remain in place.
 // ---------------------------------------------------------------------------
 
-test('AC-7: observer not started on blocked URL; injected Japanese text stays un-annotated', async () => {
+test('T-18-020 AC-7: observer not started on blocked URL; injected Japanese text stays un-annotated', async () => {
   // The MutationObserver must only be started when isAllowed(settings) returns true.
   // A blocked URL must not trigger any annotation even when Japanese content is
   // dynamically injected into the DOM after page load.
