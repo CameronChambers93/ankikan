@@ -1,4 +1,4 @@
-import { resolveLemmaMode } from './lemma-util.js';
+import { resolveLemmaMode } from '../shared/lemma-util.js';
 import { injectFurigana } from './content.segmentation.js';
 
 export const STATUS_CLASSES = ['anki-unlearned', 'anki-learning', 'anki-learned', 'anki-unknown'];

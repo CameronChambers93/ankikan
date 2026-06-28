@@ -96,7 +96,7 @@ test.afterAll(async () => {
 // AC6 — stored styleSettings must be applied to #anki-dynamic-styles on load
 // ---------------------------------------------------------------------------
 
-test('page load applies stored styleSettings overrides, not built-in fallback colours', async () => {
+test('T-8-001 page load applies stored styleSettings overrides, not built-in fallback colours', async () => {
   // content.js calls injectStyles() unconditionally on page load. The CSS it
   // injects must reflect whatever is in chrome.storage — not the hard-coded
   // BUILT_IN_STYLE_FALLBACK values — once the DEFAULTS fix is in place.

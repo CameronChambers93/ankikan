@@ -1,4 +1,4 @@
-import { STYLE_DEFAULTS } from './style-util.js';
+import { STYLE_DEFAULTS } from '../shared/style-util.js';
 
 /**
  * Resets every style input in `doc` to STYLE_DEFAULTS values, persists to storage,

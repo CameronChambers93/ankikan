@@ -1,5 +1,5 @@
-import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet, injectStyles, resolveStyleSettings } from './style-util.js';
-import { resolveLemmaMode, filterLemmaMap } from './lemma-util.js';
+import { BUILT_IN_STYLE_FALLBACK, hexToRgb, resolveCategory, buildStyleSheet, injectStyles, resolveStyleSettings } from '../shared/style-util.js';
+import { resolveLemmaMode, filterLemmaMap } from '../shared/lemma-util.js';
 import { segmentAndWrap } from './content.segmentation.js';
 import { collectAddedRoots, debounce } from './content.observer.js';
 import DynamicDictionaries from 'kuromoji/src/dict/DynamicDictionaries.js';

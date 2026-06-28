@@ -74,7 +74,7 @@ async function clearStorage(popup) {
 // AC2 — Global colour change persists; no per-category backgroundColor written
 // ---------------------------------------------------------------------------
 
-test('global bg-color change is saved and no per-category backgroundColor override is written', async () => {
+test('T-4-001 global bg-color change is saved and no per-category backgroundColor override is written', async () => {
   // Tests that changing only the global colour does not pollute per-category
   // overrides with '#000000', which is the coerced value for an empty color input.
   const popup = await openPopup();
@@ -108,7 +108,7 @@ test('global bg-color change is saved and no per-category backgroundColor overri
 // AC3 — Per-category colour persists when its enable checkbox is explicitly checked
 // ---------------------------------------------------------------------------
 
-test('unlearned bg-color is persisted when unlearned-bg-color-enabled checkbox is checked', async () => {
+test('T-4-002 unlearned bg-color is persisted when unlearned-bg-color-enabled checkbox is checked', async () => {
   // Without the enable checkbox the fix cannot know whether the user intentionally
   // picked a colour or whether the input was simply defaulting to '#000000'.
   // This test verifies that the checkbox + colour pair round-trips correctly.
@@ -145,7 +145,7 @@ test('unlearned bg-color is persisted when unlearned-bg-color-enabled checkbox i
 // AC5 — Per-category colours are absent from storage when checkboxes are not checked
 // ---------------------------------------------------------------------------
 
-test('per-category styleSettings entries are empty objects when enable checkboxes are not checked', async () => {
+test('T-4-003 per-category styleSettings entries are empty objects when enable checkboxes are not checked', async () => {
   // Changing any style input (e.g. global opacity) must not cause per-category
   // backgroundColor values to be written when the enable checkboxes are unchecked.
   // Empty objects are the correct representation of "no override".
@@ -172,7 +172,7 @@ test('per-category styleSettings entries are empty objects when enable checkboxe
 // AC1 / AC4 — Reset to defaults unchecks all per-category enable checkboxes
 // ---------------------------------------------------------------------------
 
-test('Reset to defaults button unchecks all per-category bg-color enable checkboxes', async () => {
+test('T-4-004 Reset to defaults button unchecks all per-category bg-color enable checkboxes', async () => {
   // After a reset, the popup should represent "no category overrides" — all enable
   // checkboxes must be unchecked so that subsequent saves do not write spurious values.
   const popup = await openPopup();
