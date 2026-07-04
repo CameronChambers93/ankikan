@@ -189,6 +189,11 @@ describe('popup HTML style section (AC1)', () => {
     const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'options.html');
     const html = fs.readFileSync(htmlPath, 'utf8');
     doc = new JSDOM(html, { url: 'http://localhost/' }).window.document;
+    // Issue #45: the style controls are generated from STYLE_SCHEMA at runtime into
+    // #style-controls, not hand-written in options.html. Run the same generation
+    // options.js performs on load before asserting the controls exist.
+    const { loadStyleSettings } = await import('./options.js');
+    await loadStyleSettings(doc, async () => ({ styleSettings: STYLE_DEFAULTS.styleSettings }));
   });
 
   it('contains a section or element with a "Style" heading', () => {
