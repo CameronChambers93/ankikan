@@ -3,7 +3,10 @@ import {
   BUILT_IN_STYLE_FALLBACK,
   STYLE_SCHEMA,
   STYLE_CATEGORIES,
+  STYLE_PRESETS,
   resolveStyleSettings,
+  applyPreset,
+  matchPreset,
 } from './style-util.js';
 import { ZipReader, BlobReader, BlobWriter } from '@zip.js/zip.js';
 import { saveDictionary, hasDictionary } from './dict-store.js';
@@ -44,17 +47,26 @@ function ensureStyleControls(doc) {
   if (!container) return;
   if (doc.getElementById(`global-${STYLE_SCHEMA[0].id}`)) return;
 
-  const defaultRow = doc.createElement('div');
+  const groupContainers = {};
   for (const entry of STYLE_SCHEMA) {
+    let groupEl = groupContainers[entry.group];
+    if (!groupEl) {
+      groupEl = doc.createElement('div');
+      groupEl.dataset.styleGroup = entry.group;
+      const heading = doc.createElement('h3');
+      heading.textContent = entry.group.charAt(0).toUpperCase() + entry.group.slice(1);
+      groupEl.appendChild(heading);
+      groupContainers[entry.group] = groupEl;
+      container.appendChild(groupEl);
+    }
     const label = doc.createElement('label');
     label.textContent = `Default ${entry.key} `;
     const input = doc.createElement('input');
     input.id = `global-${entry.id}`;
     applyControlAttributes(input, entry);
     label.appendChild(input);
-    defaultRow.appendChild(label);
+    groupEl.appendChild(label);
   }
-  container.appendChild(defaultRow);
 
   for (const cat of STYLE_CATEGORIES) {
     const row = doc.createElement('div');
@@ -76,6 +88,29 @@ function ensureStyleControls(doc) {
 }
 
 /**
+ * Populates `#style-preset` with one <option> per STYLE_PRESETS entry (in
+ * insertion order) plus a trailing "Custom" option. No-op if the element is
+ * absent or already populated.
+ *
+ * @param {Document} doc
+ */
+function ensurePresetOptions(doc) {
+  const select = doc.getElementById('style-preset');
+  if (!select || select.options.length) return;
+
+  for (const [key, preset] of Object.entries(STYLE_PRESETS)) {
+    const option = doc.createElement('option');
+    option.value = key;
+    option.textContent = preset.label;
+    select.appendChild(option);
+  }
+  const customOption = doc.createElement('option');
+  customOption.value = 'custom';
+  customOption.textContent = 'Custom';
+  select.appendChild(customOption);
+}
+
+/**
  * Reads stored style settings via `storageGet` and populates all inputs in `doc`.
  * Falls back to STYLE_DEFAULTS when storage returns nothing. Generates the
  * schema-driven controls into `#style-controls` first if they don't exist yet.
@@ -85,9 +120,13 @@ function ensureStyleControls(doc) {
  */
 export async function loadStyleSettings(doc, storageGet) {
   ensureStyleControls(doc);
+  ensurePresetOptions(doc);
 
   const data = await storageGet({ styleSettings: STYLE_DEFAULTS.styleSettings });
   const styleSettings = resolveStyleSettings(data.styleSettings);
+
+  const presetEl = doc.getElementById('style-preset');
+  if (presetEl) presetEl.value = matchPreset(styleSettings) ?? 'custom';
 
   for (const entry of STYLE_SCHEMA) {
     const globalEl = doc.getElementById(`global-${entry.id}`);
@@ -170,6 +209,33 @@ export async function onStyleChange(doc, storageSet, messageFn) {
   const styleSettings = currentStyleSettings(doc);
   await storageSet({ styleSettings });
   messageFn({ action: 'refreshStyles', styleSettings });
+
+  const sel = doc.getElementById('style-preset');
+  if (sel) sel.value = matchPreset(styleSettings) ?? 'custom';
+}
+
+/**
+ * Applies the preset selected in `#style-preset` over the current style
+ * settings, writes the merged default-layer values back into the generated
+ * inputs, and persists via the same contract as onStyleChange.
+ *
+ * @param {Document} doc
+ * @param {Function} storageSet - Called with { styleSettings }
+ * @param {Function} messageFn  - Called with { action: 'refreshStyles', styleSettings }
+ */
+export async function onPresetChange(doc, storageSet, messageFn) {
+  const value = doc.getElementById('style-preset').value;
+  const merged = applyPreset(currentStyleSettings(doc), value);
+
+  for (const entry of STYLE_SCHEMA) {
+    const globalEl = doc.getElementById(`global-${entry.id}`);
+    if (globalEl) globalEl.value = merged.default[entry.key];
+  }
+
+  await storageSet({ styleSettings: merged });
+  messageFn({ action: 'refreshStyles', styleSettings: merged });
+
+  doc.getElementById('style-preset').value = matchPreset(merged) ?? value;
 }
 
 /**
@@ -310,6 +376,10 @@ if (typeof document !== 'undefined' && ext) {
 
   document.getElementById('resetStylesBtn')?.addEventListener('click', () =>
     resetOptionsToDefaults(document, storageSet, messageFn)
+  );
+
+  document.getElementById('style-preset')?.addEventListener('change', () =>
+    onPresetChange(document, storageSet, messageFn)
   );
 
   ext.storage.onChanged.addListener((changes) => {
