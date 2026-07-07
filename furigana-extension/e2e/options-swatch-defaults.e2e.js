@@ -84,7 +84,7 @@ async function getStorage(page) {
 // AC1 — On load with fresh storage, inheriting swatches show built-in default colours
 // ---------------------------------------------------------------------------
 
-test('AC1: unlearned swatch shows #dc4646 on load when no backgroundColor override is stored', async () => {
+test('T-28-005 AC1: unlearned swatch shows #dc4646 on load when no backgroundColor override is stored', async () => {
   // The swatch value must match what the actual highlight renders, so the user
   // sees an accurate preview even when the checkbox is unchecked (inheriting).
   const page = await openOptionsPage();
@@ -99,7 +99,7 @@ test('AC1: unlearned swatch shows #dc4646 on load when no backgroundColor overri
   await page.close();
 });
 
-test('AC1: learning swatch shows #e6aa1e on load when no backgroundColor override is stored', async () => {
+test('T-28-006 AC1: learning swatch shows #e6aa1e on load when no backgroundColor override is stored', async () => {
   // The swatch for the learning category must show its canonical default colour
   // (#e6aa1e) rather than the generic grey fallback (#808080) used before the fix.
   const page = await openOptionsPage();
@@ -113,7 +113,7 @@ test('AC1: learning swatch shows #e6aa1e on load when no backgroundColor overrid
   await page.close();
 });
 
-test('AC1: learned swatch shows #32aa50 on load when no backgroundColor override is stored', async () => {
+test('T-28-007 AC1: learned swatch shows #32aa50 on load when no backgroundColor override is stored', async () => {
   // Same requirement for the learned category: the swatch must reflect the
   // actual highlight colour the user will see on the page.
   const page = await openOptionsPage();
@@ -127,7 +127,7 @@ test('AC1: learned swatch shows #32aa50 on load when no backgroundColor override
   await page.close();
 });
 
-test('AC1: per-category enable checkboxes remain unchecked when no override is stored', async () => {
+test('T-28-008 AC1: per-category enable checkboxes remain unchecked when no override is stored', async () => {
   // Showing the built-in colour in the swatch must not mistakenly activate the
   // enable checkbox; the checkbox must stay unchecked so no override is written
   // to storage on the next save.
@@ -146,7 +146,7 @@ test('AC1: per-category enable checkboxes remain unchecked when no override is s
 // AC2 — After "Reset to defaults", swatches show built-in default colours
 // ---------------------------------------------------------------------------
 
-test('AC2: unlearned swatch shows #dc4646 after Reset to defaults', async () => {
+test('T-28-009 AC2: unlearned swatch shows #dc4646 after Reset to defaults', async () => {
   // Clicking Reset must restore the visible swatch to the category's canonical
   // default, not leave it as black (the browser default for an empty colour input).
   const page = await openOptionsPage();
@@ -167,7 +167,7 @@ test('AC2: unlearned swatch shows #dc4646 after Reset to defaults', async () => 
   await page.close();
 });
 
-test('AC2: learning swatch shows #e6aa1e after Reset to defaults', async () => {
+test('T-28-010 AC2: learning swatch shows #e6aa1e after Reset to defaults', async () => {
   // The reset handler sets colorEl.value = '' before the fix; this must become
   // BUILT_IN_STYLE_FALLBACK[cat].backgroundColor so the swatch is meaningful.
   const page = await openOptionsPage();
@@ -187,7 +187,7 @@ test('AC2: learning swatch shows #e6aa1e after Reset to defaults', async () => {
   await page.close();
 });
 
-test('AC2: learned swatch shows #32aa50 after Reset to defaults', async () => {
+test('T-28-011 AC2: learned swatch shows #32aa50 after Reset to defaults', async () => {
   // All three categories must be covered; a partial reset would leave one swatch
   // showing black while the highlight uses the canonical built-in colour.
   const page = await openOptionsPage();
@@ -207,7 +207,7 @@ test('AC2: learned swatch shows #32aa50 after Reset to defaults', async () => {
   await page.close();
 });
 
-test('AC2: after Reset to defaults, no category has a backgroundColor override in storage', async () => {
+test('T-28-012 AC2: after Reset to defaults, no category has a backgroundColor override in storage', async () => {
   // The cosmetic swatch value after reset must NOT be written to storage as an
   // override; if it were, resolveCategory() would never reach BUILT_IN_STYLE_FALLBACK
   // and the actual highlight colour would be permanently locked to the swatch value.
@@ -237,7 +237,7 @@ test('AC2: after Reset to defaults, no category has a backgroundColor override i
 // AC3 — Enabling an override and editing the colour persists across close/reopen
 // ---------------------------------------------------------------------------
 
-test('AC3: enabling unlearned override and setting colour persists after options page is reopened', async () => {
+test('T-28-013 AC3: enabling unlearned override and setting colour persists after options page is reopened', async () => {
   // Persistence is the primary guarantee: a user-chosen colour must survive
   // the page being closed and reopened, and must not be clobbered by the fallback.
   const page = await openOptionsPage();
@@ -267,7 +267,7 @@ test('AC3: enabling unlearned override and setting colour persists after options
   await page2.close();
 });
 
-test('AC3: enabling learning override persists and is not overwritten by the built-in fallback', async () => {
+test('T-28-014 AC3: enabling learning override persists and is not overwritten by the built-in fallback', async () => {
   // The fallback must only fire when NO override exists; a real user colour must
   // be preserved verbatim and never replaced with the category default.
   const page = await openOptionsPage();
@@ -291,7 +291,7 @@ test('AC3: enabling learning override persists and is not overwritten by the bui
   await page2.close();
 });
 
-test('AC3: enabling learned override persists and swatch is enabled on reopen', async () => {
+test('T-28-015 AC3: enabling learned override persists and swatch is enabled on reopen', async () => {
   // All three categories must individually support the persist-and-reopen contract;
   // a single passing category would not prove the fix works for the full set.
   const page = await openOptionsPage();

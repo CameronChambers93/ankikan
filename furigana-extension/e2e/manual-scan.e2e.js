@@ -199,7 +199,7 @@ async function clearStorage(popup) {
 // AC-15 — Manual scan re-annotates spans after auto-scan classes are stripped
 // ---------------------------------------------------------------------------
 
-test('manual scan via chrome.tabs.sendMessage re-annotates spans after anki-* classes are cleared', async () => {
+test('T-22-041 manual scan via chrome.tabs.sendMessage re-annotates spans after anki-* classes are cleared', async () => {
   // AC-15: The manual scan path (content script `scan` message handler → scanPage) must
   // independently annotate spans. We prove this by stripping auto-scan annotations first
   // so a pass requires the manual path to run.
