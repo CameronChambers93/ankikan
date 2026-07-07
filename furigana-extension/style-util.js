@@ -46,6 +46,59 @@ export const STYLE_SCHEMA = [
 export const STYLE_CATEGORIES = ['unknown', 'unlearned', 'learning', 'learned'];
 
 /**
+ * Named shortcuts for the `default` layer of styleSettings, offered on the
+ * options page as a quick "just pick a look" alternative to the full
+ * schema-driven advanced controls.
+ */
+export const STYLE_PRESETS = {
+  'soft-fill':   { label: 'Soft fill',   settings: { default: { backgroundOpacity: 0.22, outlineWidth: 0 } } },
+  'outline-box': { label: 'Outline box', settings: { default: { backgroundOpacity: 0, outlineWidth: 2, outlineOpacity: 0.8 } } },
+};
+
+/**
+ * Merges a named preset's `default` layer over `current.default`, preserving
+ * every other `default` key and passing per-category overrides through
+ * unchanged. Returns `current` unchanged for an unrecognised preset name or
+ * the literal `'custom'` sentinel.
+ *
+ * @param {object} current - The current styleSettings object.
+ * @param {string} presetName - A STYLE_PRESETS key, or 'custom'.
+ * @returns {object} A new styleSettings object with the preset applied.
+ */
+export function applyPreset(current, presetName) {
+  const preset = STYLE_PRESETS[presetName];
+  if (presetName === 'custom' || !preset) return current;
+  return {
+    ...current,
+    default: { ...current.default, ...preset.settings.default },
+  };
+}
+
+/**
+ * Returns the STYLE_PRESETS key that fully explains `styleSettings.default`:
+ * every key the preset declares must equal its preset value, and every other
+ * STYLE_SCHEMA key must still equal its STYLE_DEFAULTS value (i.e. untouched
+ * by the preset). Returns `null` if no preset matches (i.e. the settings are
+ * "Custom").
+ *
+ * @param {object} styleSettings
+ * @returns {string|null}
+ */
+export function matchPreset(styleSettings) {
+  for (const [key, preset] of Object.entries(STYLE_PRESETS)) {
+    const presetDefaults = preset.settings.default;
+    const matches = STYLE_SCHEMA.every((entry) => {
+      const expected = entry.key in presetDefaults
+        ? presetDefaults[entry.key]
+        : STYLE_DEFAULTS.styleSettings.default[entry.key];
+      return styleSettings.default[entry.key] === expected;
+    });
+    if (matches) return key;
+  }
+  return null;
+}
+
+/**
  * Renders the CSS declaration(s) for one STYLE_SCHEMA `group`, given a fully
  * resolved style object for a category (see resolveCategory). Each group maps
  * to exactly one declaration in the rendered `.anki-<cat>` rule.
