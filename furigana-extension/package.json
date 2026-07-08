@@ -9,7 +9,9 @@
     "build": "node build.js",
     "dev": "web-ext run --source-dir .",
     "test": "vitest run",
-    "test:e2e": "playwright test --config=playwright.config.js"
+    "test:e2e": "playwright test --config=playwright.config.js",
+    "perf:fixtures": "node perf/fixtures/build-fixtures.js",
+    "perf:micro": "node perf/micro/run.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

@@ -3,6 +3,10 @@ node_modules/
 test-results/
 playwright-report/
 
+# Perf suite generated artifacts (committed baseline is kept; runs/pages are not)
+furigana-extension/perf/results/
+furigana-extension/perf/fixtures/pages/
+
 # Project-specific
 .venv/
 nhk*.html
