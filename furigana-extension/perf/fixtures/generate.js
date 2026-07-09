@@ -11,6 +11,7 @@
  */
 
 import { mulberry32, pick, chance } from '../lib/prng.js';
+import { makeWideWordSource } from './wide-vocab.js';
 import {
   KANJI_NOUNS, KANJI_SINGLE, VERBS, ADJECTIVES, PARTICLES,
   ADVERBS, CONJUNCTIONS, PUNCT, LATIN_WORDS,
@@ -27,26 +28,34 @@ const KANJI_BIAS = { dense: 0.85, sparse: 0.45 };
 /**
  * Emits one clause as an array of word tokens (no surrounding markup).
  * Token count is variable; the caller stops once the page target is reached.
+ * Noun tokens for the 'wide' variant are `{ text, wide: true }` objects instead
+ * of plain strings, so callers can tell which tokens need `<span>` wrapping.
  *
  * @param {() => number} rng
- * @param {'dense'|'sparse'} variant
- * @returns {string[]}
+ * @param {'dense'|'sparse'|'wide'} variant
+ * @param {() => string} [wordSource] - Required when variant === 'wide'.
+ * @returns {Array<string|{text: string, wide: true}>}
  */
-function clause(rng, variant) {
+function clause(rng, variant, wordSource) {
   const out = [];
-  const kanjiBias = KANJI_BIAS[variant];
+  const kanjiBias = KANJI_BIAS[variant] ?? KANJI_BIAS.dense;
+  const noun = () => (
+    variant === 'wide'
+      ? { text: wordSource(), wide: true }
+      : (chance(rng, kanjiBias) ? pick(rng, KANJI_NOUNS) : pick(rng, KANJI_SINGLE))
+  );
 
   if (chance(rng, 0.15)) out.push(pick(rng, CONJUNCTIONS));
   if (chance(rng, 0.2)) out.push(pick(rng, ADVERBS));
 
   // Subject
-  out.push(chance(rng, kanjiBias) ? pick(rng, KANJI_NOUNS) : pick(rng, KANJI_SINGLE));
+  out.push(noun());
   out.push(pick(rng, PARTICLES));
 
   // Optional object with adjective
   if (chance(rng, 0.6)) {
     if (chance(rng, 0.4)) out.push(pick(rng, ADJECTIVES));
-    out.push(chance(rng, kanjiBias) ? pick(rng, KANJI_NOUNS) : pick(rng, KANJI_SINGLE));
+    out.push(noun());
     out.push(pick(rng, PARTICLES));
   }
 
@@ -56,6 +65,11 @@ function clause(rng, variant) {
   return out;
 }
 
+/** Resolves a clause token (plain string or wide-marked object) to its raw text. */
+function tokenText(tok) {
+  return typeof tok === 'string' ? tok : tok.text;
+}
+
 /**
  * Generates a flat string of Japanese text with roughly `tokenCount` tokens.
  * Used by the tokenize micro-benchmark, which wants raw text, not DOM.
@@ -63,30 +77,34 @@ function clause(rng, variant) {
  * @param {number} tokenCount
  * @param {object} [opts]
  * @param {number} [opts.seed]
- * @param {'dense'|'sparse'} [opts.variant]
+ * @param {'dense'|'sparse'|'wide'} [opts.variant]
  * @returns {string}
  */
 export function generateText(tokenCount, { seed = DEFAULT_SEED, variant = 'dense' } = {}) {
   const rng = mulberry32(seed);
+  const wordSource = variant === 'wide' ? makeWideWordSource(seed) : undefined;
   const tokens = [];
-  while (tokens.length < tokenCount) tokens.push(...clause(rng, variant));
-  return tokens.join('');
+  while (tokens.length < tokenCount) tokens.push(...clause(rng, variant, wordSource));
+  return tokens.map(tokenText).join('');
 }
 
 /**
  * Generates a full HTML document whose body contains ~`tokenCount` Japanese
  * tokens spread across many block elements, mimicking a real article. The
  * 'sparse' variant scatters Latin words and inline markup between the Japanese.
+ * The 'wide' variant wraps each noun slot in a bare <span> at generation time
+ * (bypassing the tokenizer for those slots — see module docstring).
  *
  * @param {number} tokenCount
  * @param {object} [opts]
  * @param {number} [opts.seed]
- * @param {'dense'|'sparse'} [opts.variant]
+ * @param {'dense'|'sparse'|'wide'} [opts.variant]
  * @param {string} [opts.title]
  * @returns {string} A complete HTML document string.
  */
 export function generateHTML(tokenCount, { seed = DEFAULT_SEED, variant = 'dense', title } = {}) {
   const rng = mulberry32(seed);
+  const wordSource = variant === 'wide' ? makeWideWordSource(seed) : undefined;
   const TOKENS_PER_PARA = 30;
   const paragraphs = [];
   let emitted = 0;
@@ -94,7 +112,7 @@ export function generateHTML(tokenCount, { seed = DEFAULT_SEED, variant = 'dense
   while (emitted < tokenCount) {
     const paraTokens = [];
     while (paraTokens.length < TOKENS_PER_PARA && emitted < tokenCount) {
-      const c = clause(rng, variant);
+      const c = clause(rng, variant, wordSource);
       paraTokens.push(...c);
       emitted += c.length;
     }
@@ -115,9 +133,14 @@ export function generateHTML(tokenCount, { seed = DEFAULT_SEED, variant = 'dense
 
 /**
  * Wraps a clause's tokens in block markup. For 'sparse', injects Latin words and
- * inline <a>/<em> elements so the generated text node boundaries vary.
+ * inline <a>/<em> elements so the generated text node boundaries vary. For
+ * 'wide', each wide-marked noun token becomes a bare <span>; everything else is
+ * emitted as plain text so segmentAndWrap still has surrounding text to tokenize.
  */
 function renderParagraph(rng, tokens, variant) {
+  if (variant === 'wide') {
+    return `<p>${tokens.map((t) => (typeof t === 'string' ? t : `<span>${t.text}</span>`)).join('')}</p>`;
+  }
   if (variant !== 'sparse') {
     return `<p>${tokens.join('')}</p>`;
   }

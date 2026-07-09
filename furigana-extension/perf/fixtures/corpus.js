@@ -48,3 +48,16 @@ export const LATIN_WORDS = [
   'the', 'data', 'system', 'page', 'note', 'card', 'study', 'review', 'item',
   'value', 'index', 'token', 'block', 'inline', 'content', 'render',
 ];
+
+// Single Han characters used only by wideVocabulary's base-N compound encoding
+// (perf/fixtures/wide-vocab.js). Kept disjoint from KANJI_SINGLE/KANJI_NOUNS so
+// wide-variant lookup words never collide with the dense/sparse pools. Order
+// doesn't matter — wideVocabulary shuffles this deterministically per seed.
+export const WIDE_KANJI_POOL = [
+  '愛', '悲', '喜', '怒', '楽', '音', '絵', '色', '赤', '青',
+  '白', '黒', '緑', '黄', '犬', '猫', '鳥', '魚', '馬', '牛',
+  '羊', '豚', '象', '虎', '熊', '猿', '兎', '鶏', '蛇', '竜',
+  '頭', '顔', '目', '耳', '鼻', '口', '手', '足', '心', '体',
+  '血', '骨', '肉', '皮', '毛', '爪', '涙', '汗', '声', '息',
+  '夢', '恋', '友', '家', '族', '親', '子', '兄', '弟', '姉',
+];

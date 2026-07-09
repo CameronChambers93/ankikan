@@ -22,6 +22,7 @@ import { printTable } from '../lib/bench.js';
 import { run as runTokenize } from './tokenize.bench.js';
 import { run as runSegment } from './segment.bench.js';
 import { run as runScan } from './scan.bench.js';
+import { run as runTextUtil } from './text-util.bench.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = path.join(__dirname, '..', 'results');
@@ -30,6 +31,7 @@ const SUITES = [
   ['tokenize', runTokenize],
   ['segment', runSegment],
   ['scan', runScan],
+  ['text-util', runTextUtil],
 ];
 
 async function main() {
@@ -53,7 +55,7 @@ async function main() {
       tier: 'micro',
       timestamp: new Date().toISOString(),
       node: process.version,
-      samples: Number(process.env.PERF_SAMPLES) || 8,
+      samples: Number(process.env.PERF_SAMPLES) || 25,
       sizes: sizes.map(([name]) => name),
       durationMs: Math.round(performance.now() - t0),
     },

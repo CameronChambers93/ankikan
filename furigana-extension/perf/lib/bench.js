@@ -10,8 +10,13 @@
 
 import { performance } from 'node:perf_hooks';
 
-const DEFAULT_SAMPLES = Number(process.env.PERF_SAMPLES) || 8;
 const DEFAULT_WARMUP = Number(process.env.PERF_WARMUP) || 2;
+
+// Read lazily (inside sample(), not at module load) so tests can control the
+// default hermetically by deleting process.env.PERF_SAMPLES before calling.
+function defaultSamples() {
+  return Number(process.env.PERF_SAMPLES) || 25;
+}
 
 /**
  * @param {number[]} xs - Durations in ms.
@@ -34,13 +39,14 @@ export function stats(xs) {
  * @param {(i:number) => any} [opts.setupEach] - Untimed; its return is passed to fn.
  * @returns {Promise<ReturnType<typeof stats>>}
  */
-export async function sample(fn, { samples = DEFAULT_SAMPLES, warmup = DEFAULT_WARMUP, setupEach } = {}) {
+export async function sample(fn, { samples, warmup = DEFAULT_WARMUP, setupEach } = {}) {
+  const nSamples = samples ?? defaultSamples();
   for (let i = 0; i < warmup; i++) {
     const arg = setupEach ? setupEach(-1 - i) : undefined;
     await fn(arg);
   }
   const durations = [];
-  for (let i = 0; i < samples; i++) {
+  for (let i = 0; i < nSamples; i++) {
     const arg = setupEach ? setupEach(i) : undefined;
     const t0 = performance.now();
     await fn(arg);
