@@ -1,0 +1,137 @@
+{
+  "meta": {
+    "tier": "micro",
+    "timestamp": "2026-07-09T18:30:30.080Z",
+    "node": "v20.17.0",
+    "samples": 10,
+    "sizes": [
+      "S"
+    ],
+    "durationMs": 955
+  },
+  "records": [
+    {
+      "suite": "tokenize",
+      "scenario": "tokenize",
+      "size": "S",
+      "variant": "dense",
+      "unit": "ms",
+      "p50": 0.904,
+      "p95": 1.703,
+      "max": 3.818,
+      "mean": 1.255,
+      "n": 10,
+      "chars": 170,
+      "tokens": 101,
+      "tokensPerSec": 111713
+    },
+    {
+      "suite": "tokenize",
+      "scenario": "tokenize",
+      "size": "S",
+      "variant": "sparse",
+      "unit": "ms",
+      "p50": 0.457,
+      "p95": 0.594,
+      "max": 3.249,
+      "mean": 0.753,
+      "n": 10,
+      "chars": 155,
+      "tokens": 101,
+      "tokensPerSec": 221103
+    },
+    {
+      "suite": "segment",
+      "scenario": "segmentAndWrap",
+      "size": "S",
+      "variant": "dense",
+      "unit": "ms",
+      "p50": 3.48,
+      "p95": 4.821,
+      "max": 6.452,
+      "mean": 3.743,
+      "n": 10,
+      "spans": 86,
+      "spansPerSec": 24711
+    },
+    {
+      "suite": "segment",
+      "scenario": "segmentAndWrap",
+      "size": "S",
+      "variant": "sparse",
+      "unit": "ms",
+      "p50": 3.377,
+      "p95": 6.277,
+      "max": 9.012,
+      "mean": 4.468,
+      "n": 10,
+      "spans": 95,
+      "spansPerSec": 28133
+    },
+    {
+      "suite": "scan",
+      "scenario": "scanPage",
+      "size": "S",
+      "variant": "dense",
+      "unit": "ms",
+      "p50": 6.137,
+      "p95": 7.569,
+      "max": 8.048,
+      "mean": 6.193,
+      "n": 10,
+      "candidates": 86
+    },
+    {
+      "suite": "scan",
+      "scenario": "scanPage",
+      "size": "S",
+      "variant": "sparse",
+      "unit": "ms",
+      "p50": 4.987,
+      "p95": 7.398,
+      "max": 8.295,
+      "mean": 5.853,
+      "n": 10,
+      "candidates": 95
+    },
+    {
+      "suite": "text-util",
+      "scenario": "splitKanjiKana-alternating",
+      "size": null,
+      "variant": null,
+      "unit": "ms",
+      "p50": 1.317,
+      "p95": 2.781,
+      "max": 3.355,
+      "mean": 1.822,
+      "n": 10,
+      "chars": 50000
+    },
+    {
+      "suite": "text-util",
+      "scenario": "isJapanese-non-japanese",
+      "size": null,
+      "variant": null,
+      "unit": "ms",
+      "p50": 0,
+      "p95": 0.001,
+      "max": 0.002,
+      "mean": 0.001,
+      "n": 10,
+      "chars": 50000
+    },
+    {
+      "suite": "text-util",
+      "scenario": "extractWord-many-ruby",
+      "size": null,
+      "variant": null,
+      "unit": "ms",
+      "p50": 1.724,
+      "p95": 2.015,
+      "max": 4.064,
+      "mean": 1.984,
+      "n": 10,
+      "rubyCount": 500
+    }
+  ]
+}
