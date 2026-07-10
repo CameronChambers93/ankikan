@@ -59,10 +59,34 @@ test.afterAll(async () => {
   await browserContext?.close();
 });
 
+/**
+ * Issue #47 moved the schema-generated style controls behind a collapsed
+ * <details id="style-advanced">. Pre-#47 tests interact with those controls
+ * directly, so expand the panel after load to make them visible/actionable.
+ * No-op when the panel is absent (older markup / non-options pages).
+ */
+async function expandStyleAdvanced(page) {
+  await page.evaluate(() => {
+    const d = document.getElementById('style-advanced');
+    if (d) d.open = true;
+  });
+}
+
+/**
+ * Issue #47 also moved the per-category override controls behind a tabbed UI
+ * (only one category's panel is visible at a time). Pre-#47 tests interact
+ * with unlearned/learning/learned controls directly, so select that
+ * category's tab first to make its panel visible/actionable.
+ */
+async function selectCategoryTab(page, cat) {
+  await page.locator(`#style-tab-${cat}`).click();
+}
+
 /** Opens options.html as a new page in the shared browser context. */
 async function openOptionsPage() {
   const page = await browserContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`);
+  await expandStyleAdvanced(page);
   return page;
 }
 
@@ -153,6 +177,7 @@ test('AC2: unlearned swatch shows #dc4646 after Reset to defaults', async () => 
   await clearStorage(page);
 
   // Enable the override and set a custom colour so there is something to reset.
+  await selectCategoryTab(page, 'unlearned');
   await page.locator('#unlearned-bg-color-enabled').check();
   await page.locator('#unlearned-bg-color').fill('#aabbcc');
   await page.locator('#unlearned-bg-color').dispatchEvent('input');
@@ -173,6 +198,7 @@ test('AC2: learning swatch shows #e6aa1e after Reset to defaults', async () => {
   const page = await openOptionsPage();
   await clearStorage(page);
 
+  await selectCategoryTab(page, 'learning');
   await page.locator('#learning-bg-color-enabled').check();
   await page.locator('#learning-bg-color').fill('#001122');
   await page.locator('#learning-bg-color').dispatchEvent('input');
@@ -193,6 +219,7 @@ test('AC2: learned swatch shows #32aa50 after Reset to defaults', async () => {
   const page = await openOptionsPage();
   await clearStorage(page);
 
+  await selectCategoryTab(page, 'learned');
   await page.locator('#learned-bg-color-enabled').check();
   await page.locator('#learned-bg-color').fill('#998877');
   await page.locator('#learned-bg-color').dispatchEvent('input');
@@ -216,6 +243,7 @@ test('AC2: after Reset to defaults, no category has a backgroundColor override i
 
   // Establish overrides for all three categories.
   for (const cat of ['unlearned', 'learning', 'learned']) {
+    await selectCategoryTab(page, cat);
     await page.locator(`#${cat}-bg-color-enabled`).check();
     await page.locator(`#${cat}-bg-color`).fill('#ff0000');
     await page.locator(`#${cat}-bg-color`).dispatchEvent('input');
@@ -243,6 +271,7 @@ test('AC3: enabling unlearned override and setting colour persists after options
   const page = await openOptionsPage();
   await clearStorage(page);
 
+  await selectCategoryTab(page, 'unlearned');
   await page.locator('#unlearned-bg-color-enabled').check();
   await page.locator('#unlearned-bg-color').fill('#112233');
   await page.locator('#unlearned-bg-color').dispatchEvent('input');
@@ -273,6 +302,7 @@ test('AC3: enabling learning override persists and is not overwritten by the bui
   const page = await openOptionsPage();
   await clearStorage(page);
 
+  await selectCategoryTab(page, 'learning');
   await page.locator('#learning-bg-color-enabled').check();
   await page.locator('#learning-bg-color').fill('#aabbcc');
   await page.locator('#learning-bg-color').dispatchEvent('input');
@@ -297,6 +327,7 @@ test('AC3: enabling learned override persists and swatch is enabled on reopen', 
   const page = await openOptionsPage();
   await clearStorage(page);
 
+  await selectCategoryTab(page, 'learned');
   await page.locator('#learned-bg-color-enabled').check();
   await page.locator('#learned-bg-color').fill('#334455');
   await page.locator('#learned-bg-color').dispatchEvent('input');

@@ -229,3 +229,26 @@ select#lemmaMode {
   font-size: 11px;
   color: #6b7280;
 }
+
+.style-category-tab {
+  width: auto;
+  padding: 5px 10px;
+  font-size: 12px;
+  margin-right: 4px;
+  background: #f9fafb;
+  border: 1px solid #d1d5db;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+}
+
+.style-category-tab[aria-selected="true"] {
+  background: #fff;
+  border-bottom-color: #fff;
+  font-weight: 600;
+}
+
+.style-category-panel {
+  border: 1px solid #d1d5db;
+  border-top: none;
+  padding: 8px;
+}
