@@ -49,10 +49,34 @@ test.afterAll(async () => {
   await browserContext?.close();
 });
 
+/**
+ * Issue #47 moved the schema-generated style controls behind a collapsed
+ * <details id="style-advanced">. Pre-#47 tests interact with those controls
+ * directly, so expand the panel after load to make them visible/actionable.
+ * No-op when the panel is absent (older markup / non-options pages).
+ */
+async function expandStyleAdvanced(page) {
+  await page.evaluate(() => {
+    const d = document.getElementById('style-advanced');
+    if (d) d.open = true;
+  });
+}
+
+/**
+ * Issue #47 also moved the per-category override controls behind a tabbed UI
+ * (only one category's panel is visible at a time). Pre-#47 tests interact
+ * with unlearned/learning/learned controls directly, so select that
+ * category's tab first to make its panel visible/actionable.
+ */
+async function selectCategoryTab(page, cat) {
+  await page.locator(`#style-tab-${cat}`).click();
+}
+
 /** Opens options.html as a new page in the shared browser context. */
 async function openOptionsPage() {
   const page = await browserContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`);
+  await expandStyleAdvanced(page);
   return page;
 }
 
@@ -116,11 +140,14 @@ test('options.html contains #global-outline-color', async () => {
 
 test('options.html contains per-category colour inputs', async () => {
   // Per-category colour overrides must also be on the options page so none of the
-  // colour inputs remain in the popup.
+  // colour inputs remain in the popup. Issue #47 puts each category's controls
+  // behind its own tab, so only one is visible at a time -- select each tab in
+  // turn and confirm that category's input becomes visible.
   const page = await openOptionsPage();
-  await expect(page.locator('#unlearned-bg-color')).toBeVisible();
-  await expect(page.locator('#learning-bg-color')).toBeVisible();
-  await expect(page.locator('#learned-bg-color')).toBeVisible();
+  for (const cat of ['unlearned', 'learning', 'learned']) {
+    await selectCategoryTab(page, cat);
+    await expect(page.locator(`#${cat}-bg-color`)).toBeVisible();
+  }
   await page.close();
 });
 
@@ -224,6 +251,7 @@ test('unlearned-bg-color persists when its enable checkbox is checked', async ()
   const page = await openOptionsPage();
   await clearStorage(page);
 
+  await selectCategoryTab(page, 'unlearned');
   await page.locator('#unlearned-bg-color-enabled').check();
   await page.locator('#unlearned-bg-color').fill('#112233');
   await page.locator('#unlearned-bg-color').dispatchEvent('input');
@@ -252,6 +280,7 @@ test('unchecking unlearned-bg-color-enabled removes backgroundColor from storage
   await clearStorage(page);
 
   // First establish a saved colour override
+  await selectCategoryTab(page, 'unlearned');
   await page.locator('#unlearned-bg-color-enabled').check();
   await page.locator('#unlearned-bg-color').fill('#aabbcc');
   await page.locator('#unlearned-bg-color').dispatchEvent('input');
@@ -280,9 +309,11 @@ test('resetStylesBtn unchecks all per-category enable checkboxes and restores st
   await clearStorage(page);
 
   // Put the page in an overridden state
+  await selectCategoryTab(page, 'unlearned');
   await page.locator('#unlearned-bg-color-enabled').check();
   await page.locator('#unlearned-bg-color').fill('#ff0000');
   await page.locator('#unlearned-bg-color').dispatchEvent('input');
+  await selectCategoryTab(page, 'learning');
   await page.locator('#learning-bg-color-enabled').check();
   await page.locator('#learning-bg-color').fill('#00ff00');
   await page.locator('#learning-bg-color').dispatchEvent('input');

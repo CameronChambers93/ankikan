@@ -87,10 +87,24 @@ async function openPopup() {
   return page;
 }
 
+/**
+ * Issue #47 moved the schema-generated style controls behind a collapsed
+ * <details id="style-advanced">. Pre-#47 tests interact with those controls
+ * directly, so expand the panel after load to make them visible/actionable.
+ * No-op when the panel is absent (older markup / non-options pages).
+ */
+async function expandStyleAdvanced(page) {
+  await page.evaluate(() => {
+    const d = document.getElementById('style-advanced');
+    if (d) d.open = true;
+  });
+}
+
 /** Opens options.html in the shared browser context and returns the page. */
 async function openOptionsPage() {
   const page = await browserContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`);
+  await expandStyleAdvanced(page);
   return page;
 }
 

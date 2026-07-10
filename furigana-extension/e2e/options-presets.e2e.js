@@ -17,7 +17,7 @@
  * `#style-preset`, `#style-advanced`, or `[data-style-group]` exist yet.
  *
  * Test IDs continue the issue #47 sequence after the Vitest specs
- * (T-47-001..005, T-47-010..014); E2E starts at T-47-020.
+ * (T-47-001..005, T-47-010..014, T-47-023..026); E2E starts at T-47-020.
  *
  * Acceptance criteria tested:
  *   AC-2 (progressive disclosure) — T-47-020: the Advanced <details> panel is
@@ -31,10 +31,16 @@
  *   AC-4 (grouped sections)        — T-47-022: fill/shape/border group
  *                                     containers exist inside the advanced
  *                                     panel and each holds its own controls.
+ *   AC-4 (per-category tabs)       — T-47-027: only one category's override
+ *                                     inputs are visible at a time in a real
+ *                                     browser, and clicking a tab switches
+ *                                     which category is shown.
  *
  * AC-4's Vitest-level assertions (which STYLE_SCHEMA entries land in which
- * group) are covered by options.presets.test.js T-47-012; this file only
- * proves the containers are reachable in a real rendered DOM.
+ * group; the tablist/panel skeleton and selectStyleCategory switching) are
+ * covered by options.presets.test.js T-47-012 and options.tabs.test.js
+ * T-47-023..026; this file only proves the containers / visibility are real
+ * in a rendered DOM.
  */
 
 import { test, expect, chromium } from '@playwright/test';
@@ -191,6 +197,40 @@ test('T-47-022 the advanced panel groups controls into fill/shape/border section
   await expect(borderGroup.locator('#global-outline-color')).toBeAttached({ timeout: 5000 });
   await expect(borderGroup.locator('#global-outline-opacity')).toBeAttached({ timeout: 5000 });
   await expect(borderGroup.locator('#global-outline-width')).toBeAttached({ timeout: 5000 });
+
+  await page.close();
+});
+
+// ---------------------------------------------------------------------------
+// AC-4 (per-category override tabs) — T-47-027: only one category's override
+// inputs are visible at a time; clicking a tab switches which is shown.
+// ---------------------------------------------------------------------------
+
+test("T-47-027 the per-category override tabs show only one category's inputs at a time, switching via clicking a tab", async () => {
+  // options.tabs.test.js (T-47-023..026) proves the tablist/panel skeleton
+  // and hidden-attribute bookkeeping at the JSDOM level. This proves the real
+  // payoff in a rendered browser: with two categories' inputs both present in
+  // the DOM, only the active one is actually visible to the user, and
+  // clicking a tab is what flips which one that is.
+  const page = await openOptionsPage();
+  await clearStorage(page);
+
+  const advanced = page.locator('#style-advanced');
+  await expect(advanced).toBeAttached({ timeout: 5000 });
+  await page.evaluate(() => {
+    document.getElementById('style-advanced').open = true;
+  });
+
+  const unknownInput = page.locator('#unknown-bg-color');
+  const learningInput = page.locator('#learning-bg-color');
+
+  await expect(unknownInput).toBeVisible({ timeout: 5000 });
+  await expect(learningInput).toBeHidden();
+
+  await page.locator('#style-tab-learning').click();
+
+  await expect(learningInput).toBeVisible();
+  await expect(unknownInput).toBeHidden();
 
   await page.close();
 });

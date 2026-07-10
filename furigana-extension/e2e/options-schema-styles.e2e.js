@@ -67,10 +67,34 @@ test.afterAll(async () => {
   await browserContext?.close();
 });
 
+/**
+ * Issue #47 moved the schema-generated style controls behind a collapsed
+ * <details id="style-advanced">. Pre-#47 tests interact with those controls
+ * directly, so expand the panel after load to make them visible/actionable.
+ * No-op when the panel is absent (older markup / non-options pages).
+ */
+async function expandStyleAdvanced(page) {
+  await page.evaluate(() => {
+    const d = document.getElementById('style-advanced');
+    if (d) d.open = true;
+  });
+}
+
+/**
+ * Issue #47 also moved the per-category override controls behind a tabbed UI
+ * (only one category's panel is visible at a time). Pre-#47 tests interact
+ * with unlearned/learning/learned controls directly, so select that
+ * category's tab first to make its panel visible/actionable.
+ */
+async function selectCategoryTab(page, cat) {
+  await page.locator(`#style-tab-${cat}`).click();
+}
+
 /** Opens options.html as a new page in the shared browser context. */
 async function openOptionsPage() {
   const page = await browserContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`);
+  await expandStyleAdvanced(page);
   return page;
 }
 
@@ -109,6 +133,7 @@ test('T-45-020 enabling learned-outline-width-enabled and setting learned-outlin
   await expect(page.locator('#learned-outline-width-enabled')).toBeAttached({ timeout: 5000 });
   await expect(page.locator('#learned-outline-width')).toBeAttached({ timeout: 5000 });
 
+  await selectCategoryTab(page, 'learned');
   await page.locator('#learned-outline-width-enabled').check();
   await page.locator('#learned-outline-width').fill('9');
   // outlineWidth is a numeric input; the pre-refactor global/number inputs save
@@ -138,6 +163,7 @@ test('T-45-021 learned-outline-width override survives closing and reopening the
   await expect(page.locator('#learned-outline-width-enabled')).toBeAttached({ timeout: 5000 });
   await expect(page.locator('#learned-outline-width')).toBeAttached({ timeout: 5000 });
 
+  await selectCategoryTab(page, 'learned');
   await page.locator('#learned-outline-width-enabled').check();
   await page.locator('#learned-outline-width').fill('9');
   await page.locator('#learned-outline-width').dispatchEvent('change');
@@ -175,6 +201,7 @@ test('T-45-022 a saved learned-outline-width override renders as outline-width o
   await clearStorage(optionsPage);
   await expect(optionsPage.locator('#learned-outline-width-enabled')).toBeAttached({ timeout: 5000 });
   await expect(optionsPage.locator('#learned-outline-width')).toBeAttached({ timeout: 5000 });
+  await selectCategoryTab(optionsPage, 'learned');
   await optionsPage.locator('#learned-outline-width-enabled').check();
   await optionsPage.locator('#learned-outline-width').fill(String(DISTINCT_OUTLINE_WIDTH));
   await optionsPage.locator('#learned-outline-width').dispatchEvent('change');

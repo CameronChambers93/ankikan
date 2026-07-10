@@ -68,8 +68,30 @@ function ensureStyleControls(doc) {
     groupEl.appendChild(label);
   }
 
-  for (const cat of STYLE_CATEGORIES) {
-    const row = doc.createElement('div');
+  const tablist = doc.createElement('div');
+  tablist.setAttribute('role', 'tablist');
+  container.appendChild(tablist);
+
+  STYLE_CATEGORIES.forEach((cat, index) => {
+    const tab = doc.createElement('button');
+    tab.type = 'button';
+    tab.setAttribute('role', 'tab');
+    tab.classList.add('style-category-tab');
+    tab.id = `style-tab-${cat}`;
+    tab.dataset.category = cat;
+    tab.setAttribute('aria-controls', `style-panel-${cat}`);
+    tab.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
+    tab.textContent = cat.charAt(0).toUpperCase() + cat.slice(1);
+    tablist.appendChild(tab);
+
+    const panel = doc.createElement('div');
+    panel.classList.add('style-category-panel');
+    panel.setAttribute('role', 'tabpanel');
+    panel.id = `style-panel-${cat}`;
+    panel.dataset.categoryPanel = cat;
+    panel.setAttribute('aria-labelledby', `style-tab-${cat}`);
+    if (index !== 0) panel.setAttribute('hidden', '');
+
     for (const entry of STYLE_SCHEMA) {
       const label = doc.createElement('label');
       const enabled = doc.createElement('input');
@@ -81,10 +103,28 @@ function ensureStyleControls(doc) {
       input.id = `${cat}-${entry.id}`;
       applyControlAttributes(input, entry);
       label.appendChild(input);
-      row.appendChild(label);
+      panel.appendChild(label);
     }
-    container.appendChild(row);
-  }
+    container.appendChild(panel);
+  });
+}
+
+/**
+ * Shows `#style-panel-<cat>` and hides every other `.style-category-panel`,
+ * moving `aria-selected="true"` to `#style-tab-<cat>` (all other tabs get
+ * `"false"`).
+ *
+ * @param {Document} doc
+ * @param {string} cat
+ */
+export function selectStyleCategory(doc, cat) {
+  doc.querySelectorAll('.style-category-panel').forEach((panel) => {
+    if (panel.dataset.categoryPanel === cat) panel.removeAttribute('hidden');
+    else panel.setAttribute('hidden', '');
+  });
+  doc.querySelectorAll('.style-category-tab').forEach((tab) => {
+    tab.setAttribute('aria-selected', tab.dataset.category === cat ? 'true' : 'false');
+  });
 }
 
 /**
@@ -372,6 +412,12 @@ if (typeof document !== 'undefined' && ext) {
         onStyleChange(document, storageSet, messageFn);
       });
     }
+  }
+
+  for (const cat of STYLE_CATEGORIES) {
+    document.getElementById(`style-tab-${cat}`)?.addEventListener('click', () =>
+      selectStyleCategory(document, cat)
+    );
   }
 
   document.getElementById('resetStylesBtn')?.addEventListener('click', () =>
