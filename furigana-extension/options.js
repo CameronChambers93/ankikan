@@ -4,6 +4,7 @@ import {
   STYLE_SCHEMA,
   STYLE_CATEGORIES,
   resolveStyleSettings,
+  buildStyleSheet,
 } from './style-util.js';
 import { ZipReader, BlobReader, BlobWriter } from '@zip.js/zip.js';
 import { saveDictionary, hasDictionary } from './dict-store.js';
@@ -160,6 +161,31 @@ export function currentStyleSettings(doc) {
 }
 
 /**
+ * Renders a live preview of the current (not-yet-persisted) style settings into
+ * `#style-preview` by injecting a `<style id="style-preview-styles">` scoped to
+ * that container. Reads directly from the DOM via currentStyleSettings, so it
+ * reflects in-progress edits with no storage round-trip.
+ *
+ * @param {Document} doc
+ */
+export function renderPreview(doc) {
+  const styleSettings = currentStyleSettings(doc);
+  const css = buildStyleSheet(styleSettings);
+  const scoped = css
+    .split('\n')
+    .map((line) => line.replace(/^(\.anki-[a-z]+\s*\{)/, '#style-preview $1'))
+    .join('\n');
+
+  let el = doc.getElementById('style-preview-styles');
+  if (!el) {
+    el = doc.createElement('style');
+    el.id = 'style-preview-styles';
+    doc.head.appendChild(el);
+  }
+  el.textContent = scoped;
+}
+
+/**
  * Persists current style settings to storage and sends a refreshStyles message.
  *
  * @param {Document} doc
@@ -276,6 +302,7 @@ if (typeof document !== 'undefined' && ext) {
   // loadStyleSettings generates the schema-driven controls, so it must run before
   // any of the id lists below are computed against the live DOM.
   await loadStyleSettings(document, storageGet);
+  renderPreview(document);
 
   const colorInputIds = [];
   const numberInputIds = [];
@@ -288,14 +315,16 @@ if (typeof document !== 'undefined' && ext) {
   }
 
   colorInputIds.forEach((id) => {
-    document.getElementById(id)?.addEventListener('input', () =>
-      onStyleChange(document, storageSet, messageFn)
-    );
+    document.getElementById(id)?.addEventListener('input', () => {
+      onStyleChange(document, storageSet, messageFn);
+      renderPreview(document);
+    });
   });
   numberInputIds.forEach((id) => {
-    document.getElementById(id)?.addEventListener('change', () =>
-      onStyleChange(document, storageSet, messageFn)
-    );
+    document.getElementById(id)?.addEventListener('change', () => {
+      onStyleChange(document, storageSet, messageFn);
+      renderPreview(document);
+    });
   });
 
   for (const cat of STYLE_CATEGORIES) {
@@ -304,17 +333,19 @@ if (typeof document !== 'undefined' && ext) {
         const valueEl = document.getElementById(`${cat}-${entry.id}`);
         if (valueEl) valueEl.disabled = !e.target.checked;
         onStyleChange(document, storageSet, messageFn);
+        renderPreview(document);
       });
     }
   }
 
-  document.getElementById('resetStylesBtn')?.addEventListener('click', () =>
-    resetOptionsToDefaults(document, storageSet, messageFn)
-  );
+  document.getElementById('resetStylesBtn')?.addEventListener('click', () => {
+    resetOptionsToDefaults(document, storageSet, messageFn);
+    renderPreview(document);
+  });
 
   ext.storage.onChanged.addListener((changes) => {
     if ('styleSettings' in changes && !changes.styleSettings.newValue) {
-      loadStyleSettings(document, storageGet);
+      loadStyleSettings(document, storageGet).then(() => renderPreview(document));
     }
   });
 

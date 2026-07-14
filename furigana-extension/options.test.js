@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { STYLE_DEFAULTS, BUILT_IN_STYLE_FALLBACK } from './style-util.js';
+import { STYLE_DEFAULTS, BUILT_IN_STYLE_FALLBACK, STYLE_CATEGORIES, buildStyleSheet, hexToRgb } from './style-util.js';
 
 // options.js does not exist yet — dynamic imports below will throw until it is created.
 // Using dynamic import inside each test means individual tests fail with a meaningful
@@ -793,5 +793,169 @@ describe('options.html unknown-category inputs (issue #33 AC-22)', () => {
     expect(colorEl, '#unknown-bg-color must exist in options.html').not.toBeNull();
     expect(colorEl.type).toBe('color');
     expect(opacityEl, '#unknown-bg-opacity must exist in options.html').not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #46 — Highlight styling: live preview swatch in options page
+//
+// renderPreview(doc) reads the in-memory (not-yet-persisted) style settings via
+// currentStyleSettings(doc), builds CSS via buildStyleSheet(styleSettings), and
+// injects it into the options document scoped to #style-preview so the user sees
+// exactly how each status category will look without saving or reloading.
+// ---------------------------------------------------------------------------
+
+describe('renderPreview (issue #46)', () => {
+  /**
+   * Appends a #style-preview container with one sample <span class="anki-<cat>">
+   * per STYLE_CATEGORIES into `doc`. renderPreview is expected to inject/replace
+   * a scoped <style> element that targets these spans; the container itself is
+   * built here (not in options.html) so the unit test does not depend on markup.
+   */
+  function appendPreviewContainer(doc) {
+    const container = doc.createElement('div');
+    container.id = 'style-preview';
+    for (const cat of STYLE_CATEGORIES) {
+      const span = doc.createElement('span');
+      span.className = `anki-${cat}`;
+      span.textContent = '日本語のサンプル文';
+      container.appendChild(span);
+    }
+    doc.body.appendChild(container);
+    return container;
+  }
+
+  /**
+   * Test-only transform mirroring the contract's example
+   * (`.anki-unknown { … }` -> `#style-preview .anki-unknown { … }`) — derived
+   * from the SAME buildStyleSheet output the production code will scope, never
+   * a hand-authored CSS string.
+   */
+  function scopeCss(css) {
+    return css
+      .split('\n')
+      .map((line) => line.replace(/^(\.anki-[a-z]+\s*\{)/, '#style-preview $1'))
+      .join('\n');
+  }
+
+  /** Finds the single-line rule for one category within a buildStyleSheet-shaped CSS string. */
+  function extractRule(css, cat) {
+    return css.split('\n').find((line) => line.includes(`.anki-${cat} {`));
+  }
+
+  function getPreviewStyleEl(doc) {
+    return doc.getElementById('style-preview-styles');
+  }
+
+  it('T-46-001 injects a #style-preview-styles <style> element whose content is buildStyleSheet(currentStyleSettings(doc)) scoped to #style-preview, one rule per STYLE_CATEGORIES', async () => {
+    // The whole point of the live preview is that it renders from the SAME CSS
+    // generation function used for the real page (buildStyleSheet); if renderPreview
+    // diverged from that pipeline the preview could lie about what the user will see.
+    const { renderPreview, currentStyleSettings } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    appendPreviewContainer(doc);
+
+    renderPreview(doc);
+
+    const styleEl = getPreviewStyleEl(doc);
+    expect(styleEl, '#style-preview-styles <style> element must exist after renderPreview').not.toBeNull();
+    expect(styleEl.tagName).toBe('STYLE');
+
+    const expectedCss = scopeCss(buildStyleSheet(currentStyleSettings(doc)));
+    expect(styleEl.textContent).toBe(expectedCss);
+
+    for (const cat of STYLE_CATEGORIES) {
+      expect(styleEl.textContent).toContain(`#style-preview .anki-${cat} {`);
+    }
+  });
+
+  it('T-46-002 editing a global control and re-calling renderPreview updates the injected CSS with no storage call required', async () => {
+    // The preview must reflect in-memory edits immediately, before the user saves —
+    // that is the entire acceptance criterion (AC1). renderPreview must not need
+    // (and must not internally require) any storageSet/storageGet function.
+    const { renderPreview } = await import('./options.js');
+    const doc = makeOptionsDoc({ globalBgColor: '#111111' });
+    appendPreviewContainer(doc);
+
+    expect(() => renderPreview(doc)).not.toThrow();
+    const styleEl = getPreviewStyleEl(doc);
+    const oldRgb = hexToRgb('#111111');
+    const oldRgba = `rgba(${oldRgb.r}, ${oldRgb.g}, ${oldRgb.b}, 0.22)`;
+    expect(styleEl.textContent).toContain(oldRgba);
+
+    // Simulate the user editing the global background colour control directly —
+    // no storageSet call happens anywhere in this test.
+    doc.getElementById('global-bg-color').value = '#222222';
+    expect(() => renderPreview(doc)).not.toThrow();
+
+    const newRgb = hexToRgb('#222222');
+    const newRgba = `rgba(${newRgb.r}, ${newRgb.g}, ${newRgb.b}, 0.22)`;
+    expect(styleEl.textContent).toContain(newRgba);
+    expect(styleEl.textContent).not.toContain(oldRgba);
+  });
+
+  it('T-46-003 enabling a per-category override changes only that category swatch while sibling categories keep rendering the inherited default (resolve order: fallback -> default -> override)', async () => {
+    // AC2/AC3: currentStyleSettings always supplies a fully-populated `default`
+    // object from the global inputs, so per resolveCategory's merge order
+    // (fallback -> default -> category override) every un-overridden category
+    // renders the shared default, and only the overridden category's rule changes.
+    const { renderPreview, currentStyleSettings } = await import('./options.js');
+
+    // Baseline: no category overrides enabled anywhere.
+    const baselineDoc = makeOptionsDoc({ globalBgColor: '#123456' });
+    const baselineCss = buildStyleSheet(currentStyleSettings(baselineDoc));
+
+    // Same global default, but "learning" now has an explicit override enabled.
+    const doc = makeOptionsDoc({
+      globalBgColor: '#123456',
+      learningEnabled: true,
+      learningBgColor: '#00ff00',
+    });
+    appendPreviewContainer(doc);
+    renderPreview(doc);
+
+    const styleEl = getPreviewStyleEl(doc);
+    const expectedCss = scopeCss(buildStyleSheet(currentStyleSettings(doc)));
+    expect(styleEl.textContent).toBe(expectedCss);
+
+    // Sibling categories (unknown, unlearned, learned) are untouched by the
+    // learning-only override — their rules match the no-override baseline exactly.
+    for (const cat of ['unknown', 'unlearned', 'learned']) {
+      const renderedRule = extractRule(buildStyleSheet(currentStyleSettings(doc)), cat);
+      const baselineRule = extractRule(baselineCss, cat);
+      expect(renderedRule, `${cat} rule must be present`).toBeDefined();
+      expect(renderedRule).toBe(baselineRule);
+    }
+
+    // The learning rule differs from its own no-override baseline and contains
+    // the override colour's rgba — the swatch has visibly flipped to "overridden".
+    const learningRendered = extractRule(buildStyleSheet(currentStyleSettings(doc)), 'learning');
+    const learningBaseline = extractRule(baselineCss, 'learning');
+    expect(learningRendered).not.toBe(learningBaseline);
+
+    const overrideRgb = hexToRgb('#00ff00');
+    const overrideRgba = `rgba(${overrideRgb.r}, ${overrideRgb.g}, ${overrideRgb.b}, `;
+    expect(learningRendered).toContain(overrideRgba);
+    expect(learningBaseline).not.toContain(overrideRgba);
+  });
+
+  it('T-46-004 every rule in the injected preview CSS is scoped under #style-preview — no bare .anki- selector leaks onto the options page chrome', async () => {
+    // If renderPreview ever injected the unscoped buildStyleSheet output directly,
+    // the sample swatches would style the ENTIRE options page (any element that
+    // happens to carry an .anki-<cat> class), not just the #style-preview sandbox.
+    const { renderPreview, currentStyleSettings } = await import('./options.js');
+    const doc = makeOptionsDoc();
+    appendPreviewContainer(doc);
+    renderPreview(doc);
+
+    const styleEl = getPreviewStyleEl(doc);
+    const lines = styleEl.textContent.split('\n').filter((l) => l.trim().length > 0);
+    expect(lines.length).toBe(buildStyleSheet(currentStyleSettings(doc)).split('\n').length);
+
+    for (const line of lines) {
+      expect(line.trim().startsWith('#style-preview .anki-')).toBe(true);
+    }
+    // Guard directly against the failure mode: a bare selector at the start of a line.
+    expect(styleEl.textContent).not.toMatch(/^\.anki-/m);
   });
 });
