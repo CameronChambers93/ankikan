@@ -16,9 +16,16 @@
  * Issue #33: T-22-034 updated — STATUS_CLASSES now includes 'anki-unknown'.
  *            T-22-033 updated — zero-card result now applies 'anki-unknown'.
  *            New: T-33-001 through T-33-014 cover AC-1 through AC-9 for unknown.
+ *
+ * Issue #44 (T-44-041–050): performance instrumentation for scanPage. scanPage
+ * records ankikan:t_anki_findcards / ankikan:t_anki_cardsinfo / ankikan:t_dom_inject
+ * / ankikan:t_total measures around its network round-trips, DOM classify+inject
+ * loops, and the whole function respectively. PERF_NAMES is imported from
+ * content.timing.js (also not yet implemented) so assertions read the canonical
+ * name constants rather than hardcoded string literals.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
 import {
   isJapanese,
@@ -29,6 +36,7 @@ import {
   STATUS_CLASSES,
   ALL_CLASSES,
 } from './scan-util.js';
+import { PERF_NAMES } from './content.timing.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -666,5 +674,203 @@ describe('scanPage — issue #31 AC-18: pre-existing ruby in original HTML is no
     // If injectFurigana fired without the guard, a second <rt> would appear.
     expect(span.querySelectorAll('rt').length).toBe(1);
     expect(span.innerHTML).toBe(originalHTML);
+  });
+});
+
+// ===========================================================================
+// Issue #44: performance instrumentation for scanPage (T-44-041–050)
+// ===========================================================================
+
+describe('scanPage — issue #44: performance instrumentation', () => {
+  const baseSettings = {
+    fieldName: 'Expression',
+    furiganaGlobal: true,
+    furiganaUnlearned: true,
+    furiganaLearning: true,
+    furiganaLearned: false,
+    furiganaUnknown: true,
+    lemmaMode: 'off',
+    useLemma: false,
+  };
+
+  // Cross-test isolation: clear the shared performance timeline before and
+  // after each test so clear-and-overwrite measures from one test never leak
+  // into a neighbouring test's getEntriesByName/getEntriesByType assertions.
+  beforeEach(() => {
+    performance.clearMarks();
+    performance.clearMeasures();
+  });
+
+  afterEach(() => {
+    performance.clearMarks();
+    performance.clearMeasures();
+  });
+
+  it('T-44-041 happy path records exactly one ankikan:t_anki_findcards measure', async () => {
+    const doc = makeDoc('<span>日本語</span>');
+    const ankiRequest = vi.fn()
+      .mockResolvedValueOnce({ result: [[42]], error: null })
+      .mockResolvedValueOnce({ result: [{ cardId: 42, type: 2 }], error: null });
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    const measures = performance.getEntriesByName(PERF_NAMES.ANKI_FINDCARDS, 'measure');
+    expect(measures.length).toBe(1);
+  });
+
+  it('T-44-042 ankiRequest rejecting on findCards still returns error:"connection" AND records ankikan:t_anki_findcards (finally)', async () => {
+    const doc = makeDoc('<span>日本語</span>');
+    const ankiRequest = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    const result = await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    expect(result.error).toBe('connection');
+    const measures = performance.getEntriesByName(PERF_NAMES.ANKI_FINDCARDS, 'measure');
+    expect(measures.length).toBe(1);
+  });
+
+  it('T-44-043 a response with allCardIds.length > 0 records exactly one ankikan:t_anki_cardsinfo measure', async () => {
+    const doc = makeDoc('<span>日本語</span>');
+    const ankiRequest = vi.fn()
+      .mockResolvedValueOnce({ result: [[42]], error: null })
+      .mockResolvedValueOnce({ result: [{ cardId: 42, type: 2 }], error: null });
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    const measures = performance.getEntriesByName(PERF_NAMES.ANKI_CARDSINFO, 'measure');
+    expect(measures.length).toBe(1);
+  });
+
+  it('T-44-044 zero matched cards (allCardIds.length === 0) records NO ankikan:t_anki_cardsinfo measure', async () => {
+    const doc = makeDoc('<span>日本語</span>');
+    const ankiRequest = vi.fn().mockResolvedValueOnce({ result: [[]], error: null });
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    const result = await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    expect(result.matched).toBe(0);
+    const measures = performance.getEntriesByName(PERF_NAMES.ANKI_CARDSINFO, 'measure');
+    expect(measures.length).toBe(0);
+  });
+
+  it('T-44-045 ankiRequest rejecting on cardsInfo still returns error:"connection" AND records ankikan:t_anki_cardsinfo', async () => {
+    const doc = makeDoc('<span>日本語</span>');
+    const ankiRequest = vi.fn()
+      .mockResolvedValueOnce({ result: [[42]], error: null })
+      .mockRejectedValueOnce(new Error('fetch failed'));
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    const result = await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    expect(result.error).toBe('connection');
+    const measures = performance.getEntriesByName(PERF_NAMES.ANKI_CARDSINFO, 'measure');
+    expect(measures.length).toBe(1);
+  });
+
+  it('T-44-046 happy path with candidates records exactly one ankikan:t_dom_inject measure', async () => {
+    const doc = makeDoc('<span>日本語</span>');
+    const ankiRequest = vi.fn()
+      .mockResolvedValueOnce({ result: [[42]], error: null })
+      .mockResolvedValueOnce({ result: [{ cardId: 42, type: 2 }], error: null });
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    const measures = performance.getEntriesByName(PERF_NAMES.DOM_INJECT, 'measure');
+    expect(measures.length).toBe(1);
+  });
+
+  it('T-44-047 zero Japanese spans (candidates.length === 0) records none of findcards/cardsinfo/dom_inject', async () => {
+    const doc = makeDoc('<span>hello</span><span>world</span>');
+    const ankiRequest = vi.fn();
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    const result = await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    expect(result).toEqual({ found: 0, matched: 0 });
+    expect(performance.getEntriesByName(PERF_NAMES.ANKI_FINDCARDS, 'measure').length).toBe(0);
+    expect(performance.getEntriesByName(PERF_NAMES.ANKI_CARDSINFO, 'measure').length).toBe(0);
+    expect(performance.getEntriesByName(PERF_NAMES.DOM_INJECT, 'measure').length).toBe(0);
+  });
+
+  it('T-44-048 ankikan:t_total is recorded on every exit path: zero-candidates, findCards-error, and happy path', async () => {
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    // Exit path 1: zero candidates
+    const docEmpty = makeDoc('<span>hello</span>');
+    await scanPage(baseSettings, { ankiRequest: vi.fn(), fetchLemmas, doc: docEmpty });
+    expect(performance.getEntriesByName(PERF_NAMES.TOTAL, 'measure').length).toBe(1);
+    performance.clearMarks();
+    performance.clearMeasures();
+
+    // Exit path 2: findCards error
+    const docError = makeDoc('<span>日本語</span>');
+    await scanPage(baseSettings, {
+      ankiRequest: vi.fn().mockRejectedValue(new Error('fetch failed')),
+      fetchLemmas,
+      doc: docError,
+    });
+    expect(performance.getEntriesByName(PERF_NAMES.TOTAL, 'measure').length).toBe(1);
+    performance.clearMarks();
+    performance.clearMeasures();
+
+    // Exit path 3: happy path
+    const docHappy = makeDoc('<span>日本語</span>');
+    await scanPage(baseSettings, {
+      ankiRequest: vi.fn()
+        .mockResolvedValueOnce({ result: [[42]], error: null })
+        .mockResolvedValueOnce({ result: [{ cardId: 42, type: 2 }], error: null }),
+      fetchLemmas,
+      doc: docHappy,
+    });
+    expect(performance.getEntriesByName(PERF_NAMES.TOTAL, 'measure').length).toBe(1);
+  });
+
+  it('T-44-049 one successful scan orders findcards < cardsinfo < dom_inject by startTime, and t_total encloses all three', async () => {
+    const doc = makeDoc('<span>日本語</span>');
+    const ankiRequest = vi.fn()
+      .mockResolvedValueOnce({ result: [[42]], error: null })
+      .mockResolvedValueOnce({ result: [{ cardId: 42, type: 2 }], error: null });
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    const [findcards] = performance.getEntriesByName(PERF_NAMES.ANKI_FINDCARDS, 'measure');
+    const [cardsinfo] = performance.getEntriesByName(PERF_NAMES.ANKI_CARDSINFO, 'measure');
+    const [domInject] = performance.getEntriesByName(PERF_NAMES.DOM_INJECT, 'measure');
+    const [total] = performance.getEntriesByName(PERF_NAMES.TOTAL, 'measure');
+
+    expect(findcards.startTime).toBeLessThan(cardsinfo.startTime);
+    expect(cardsinfo.startTime).toBeLessThan(domInject.startTime);
+
+    const totalEnd = total.startTime + total.duration;
+    expect(total.startTime).toBeLessThanOrEqual(findcards.startTime);
+    expect(total.startTime).toBeLessThanOrEqual(cardsinfo.startTime);
+    expect(total.startTime).toBeLessThanOrEqual(domInject.startTime);
+    expect(totalEnd).toBeGreaterThanOrEqual(findcards.startTime + findcards.duration);
+    expect(totalEnd).toBeGreaterThanOrEqual(cardsinfo.startTime + cardsinfo.duration);
+    expect(totalEnd).toBeGreaterThanOrEqual(domInject.startTime + domInject.duration);
+  });
+
+  it('T-44-050 pre-existing {found, matched, error?} contract is unchanged by instrumentation', async () => {
+    // A NEW assertion co-located with the marks tests, using the real function
+    // and live JSDOM data, proving instrumentation is behaviorally invisible
+    // rather than merely re-running the pre-existing scanPage suite above.
+    const doc = makeDoc('<span>日本語</span><span>謎</span>');
+    const span1 = doc.querySelectorAll('span')[0];
+    const span2 = doc.querySelectorAll('span')[1];
+    const ankiRequest = vi.fn()
+      .mockResolvedValueOnce({ result: [[42], []], error: null })
+      .mockResolvedValueOnce({ result: [{ cardId: 42, type: 2 }], error: null });
+    const fetchLemmas = vi.fn().mockResolvedValue({});
+
+    const result = await scanPage(baseSettings, { ankiRequest, fetchLemmas, doc });
+
+    expect(result).toEqual({ found: 2, matched: 1 });
+    expect(span1.classList.contains('anki-learned')).toBe(true);
+    expect(span2.classList.contains('anki-unknown')).toBe(true);
   });
 });

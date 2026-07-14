@@ -1,3 +1,5 @@
+import { markStart, markEnd, PERF_NAMES } from './content.timing.js';
+
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'RT', 'RP', 'NOSCRIPT', 'HEAD']);
 
 const HAN_RE = /[一-龯㐀-䶿]/;
@@ -132,65 +134,70 @@ function isWordSpan(el) {
 export function segmentAndWrap(root, isJap, tokenize) {
   if (!root || !root.ownerDocument) return 0;
 
-  const doc = root.ownerDocument;
+  markStart(PERF_NAMES.SEGMENT);
+  try {
+    const doc = root.ownerDocument;
 
-  // Collect candidate text nodes to wrap, and count pre-existing word spans.
-  // We mutate after collection so live-DOM changes don't invalidate iteration.
-  const toWrap = [];
-  let preexistingCount = 0;
+    // Collect candidate text nodes to wrap, and count pre-existing word spans.
+    // We mutate after collection so live-DOM changes don't invalidate iteration.
+    const toWrap = [];
+    let preexistingCount = 0;
 
-  function collect(node) {
-    if (node.nodeType === ELEMENT_NODE) {
-      const tag = node.nodeName;
-      if (SKIP_TAGS.has(tag)) return;
-      if (isAnkiSpan(node)) return;
-      if (isWordSpan(node)) {
-        // This span was created by a previous segmentAndWrap call.
-        // Count it but do not descend — the text node inside is already wrapped.
-        preexistingCount++;
-        return;
-      }
-      for (const child of Array.from(node.childNodes)) {
-        collect(child);
-      }
-    } else if (node.nodeType === TEXT_NODE) {
-      if (isJap(node.textContent)) {
-        toWrap.push(node);
-      }
-    }
-  }
-
-  for (const child of Array.from(root.childNodes)) {
-    collect(child);
-  }
-
-  let inserted = 0;
-
-  for (const textNode of toWrap) {
-    const text = textNode.textContent;
-    const tokens = tokenize(text);
-    const fragment = doc.createDocumentFragment();
-
-    for (const token of tokens) {
-      const { surface_form, basic_form, reading } = token;
-      if (isJap(surface_form)) {
-        const span = doc.createElement('span');
-        span.textContent = surface_form;
-        if (basic_form && basic_form !== '*' && basic_form !== surface_form) {
-          span.dataset.lemma = basic_form;
+    function collect(node) {
+      if (node.nodeType === ELEMENT_NODE) {
+        const tag = node.nodeName;
+        if (SKIP_TAGS.has(tag)) return;
+        if (isAnkiSpan(node)) return;
+        if (isWordSpan(node)) {
+          // This span was created by a previous segmentAndWrap call.
+          // Count it but do not descend — the text node inside is already wrapped.
+          preexistingCount++;
+          return;
         }
-        if (reading && reading !== '*' && HAN_RE.test(surface_form)) {
-          span.dataset.reading = reading;
+        for (const child of Array.from(node.childNodes)) {
+          collect(child);
         }
-        fragment.appendChild(span);
-        inserted++;
-      } else {
-        fragment.appendChild(doc.createTextNode(surface_form));
+      } else if (node.nodeType === TEXT_NODE) {
+        if (isJap(node.textContent)) {
+          toWrap.push(node);
+        }
       }
     }
 
-    textNode.parentNode.replaceChild(fragment, textNode);
-  }
+    for (const child of Array.from(root.childNodes)) {
+      collect(child);
+    }
 
-  return inserted + preexistingCount;
+    let inserted = 0;
+
+    for (const textNode of toWrap) {
+      const text = textNode.textContent;
+      const tokens = tokenize(text);
+      const fragment = doc.createDocumentFragment();
+
+      for (const token of tokens) {
+        const { surface_form, basic_form, reading } = token;
+        if (isJap(surface_form)) {
+          const span = doc.createElement('span');
+          span.textContent = surface_form;
+          if (basic_form && basic_form !== '*' && basic_form !== surface_form) {
+            span.dataset.lemma = basic_form;
+          }
+          if (reading && reading !== '*' && HAN_RE.test(surface_form)) {
+            span.dataset.reading = reading;
+          }
+          fragment.appendChild(span);
+          inserted++;
+        } else {
+          fragment.appendChild(doc.createTextNode(surface_form));
+        }
+      }
+
+      textNode.parentNode.replaceChild(fragment, textNode);
+    }
+
+    return inserted + preexistingCount;
+  } finally {
+    markEnd(PERF_NAMES.SEGMENT);
+  }
 }

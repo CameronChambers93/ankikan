@@ -15,10 +15,17 @@
  * using the identical Unicode Script property regex from content.js is used as
  * the test fixture — this is correct because isJapanese is a *parameter* of
  * segmentAndWrap, not the function under test.
+ *
+ * Issue #44 (T-44-037–040): performance instrumentation. segmentAndWrap is
+ * wrapped so a successful call records exactly one ankikan:t_segment
+ * performance measure. PERF_NAMES is imported from content.timing.js (also
+ * not yet implemented) so these assertions read the canonical name constant
+ * rather than a hardcoded string literal.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { segmentAndWrap, katakanaToHiragana, splitKanjiKana, injectFurigana } from './content.segmentation.js';
+import { PERF_NAMES } from './content.timing.js';
 
 // ---------------------------------------------------------------------------
 // Test fixture: isJapanese predicate
@@ -546,5 +553,77 @@ describe('injectFurigana — issue #31 AC-14: all-kanji surface wraps entire wor
     span.dataset.reading = 'ニホンゴ';
     injectFurigana(span);
     expect(span.innerHTML).toContain('<ruby>日本語<rt>にほんご</rt></ruby>');
+  });
+});
+
+// ===========================================================================
+// Issue #44: performance instrumentation for segmentAndWrap (T-44-037–040)
+// ===========================================================================
+
+describe('segmentAndWrap — issue #44: performance instrumentation', () => {
+  // Cross-test isolation: clear the shared performance timeline before and
+  // after each test so clear-and-overwrite measures from one test never leak
+  // into a neighbouring test's getEntriesByName/getEntriesByType assertions.
+  beforeEach(() => {
+    performance.clearMarks();
+    performance.clearMeasures();
+  });
+
+  afterEach(() => {
+    performance.clearMarks();
+    performance.clearMeasures();
+  });
+
+  it('T-44-037 a successful call records exactly one ankikan:t_segment measure with duration >= 0', () => {
+    const tokenize = vi.fn().mockReturnValue([
+      { surface_form: '日本語', basic_form: '日本語' },
+    ]);
+    const root = makeRoot('<p>日本語</p>');
+    segmentAndWrap(root, isJapanese, tokenize);
+
+    const measures = performance.getEntriesByName(PERF_NAMES.SEGMENT, 'measure');
+    expect(measures.length).toBe(1);
+    expect(measures[0].duration).toBeGreaterThanOrEqual(0);
+  });
+
+  it('T-44-038 segmentAndWrap(null, ...) records no ankikan:t_segment measure (guard runs before instrumentation)', () => {
+    const tokenize = vi.fn();
+    const result = segmentAndWrap(null, isJapanese, tokenize);
+
+    expect(result).toBe(0);
+    expect(tokenize).not.toHaveBeenCalled();
+    const measures = performance.getEntriesByName(PERF_NAMES.SEGMENT, 'measure');
+    expect(measures.length).toBe(0);
+  });
+
+  it('T-44-039 two successive calls still yield exactly one ankikan:t_segment measure (clear-and-overwrite)', () => {
+    const tokenize = vi.fn().mockReturnValue([
+      { surface_form: '日本語', basic_form: '日本語' },
+    ]);
+    const root = makeRoot('<p>日本語</p>');
+
+    segmentAndWrap(root, isJapanese, tokenize);
+    segmentAndWrap(root, isJapanese, tokenize);
+
+    const measures = performance.getEntriesByName(PERF_NAMES.SEGMENT, 'measure');
+    expect(measures.length).toBe(1);
+  });
+
+  it('T-44-040 pre-existing behavior is unchanged: span counts, dataset.lemma, dataset.reading, and return value are unaffected by instrumentation', () => {
+    // A NEW assertion co-located with the marks test, using the real function
+    // and live JSDOM data, proving instrumentation is behaviorally invisible
+    // rather than merely re-running the pre-existing suite above.
+    const tokenize = vi.fn().mockReturnValue([
+      { surface_form: '走った', basic_form: '走る', reading: 'ハシッタ' },
+    ]);
+    const root = makeRoot('<p>走った</p>');
+    const count = segmentAndWrap(root, isJapanese, tokenize);
+
+    const spans = root.querySelectorAll('span');
+    expect(count).toBe(1);
+    expect(spans.length).toBe(1);
+    expect(spans[0].textContent).toBe('走った');
+    expect(spans[0].dataset.lemma).toBe('走る');
+    expect(spans[0].dataset.reading).toBe('ハシッタ');
   });
 });
