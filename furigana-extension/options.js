@@ -4,6 +4,7 @@ import {
   STYLE_SCHEMA,
   STYLE_CATEGORIES,
   resolveStyleSettings,
+  buildStyleSheet,
 } from './style-util.js';
 import { ZipReader, BlobReader, BlobWriter } from '@zip.js/zip.js';
 import { saveDictionary, hasDictionary } from './dict-store.js';
@@ -167,6 +168,31 @@ export function currentStyleSettings(doc) {
 }
 
 /**
+ * Renders a live preview of the current (not-yet-persisted) style settings into
+ * `#style-preview` by injecting a `<style id="style-preview-styles">` scoped to
+ * that container. Reads directly from the DOM via currentStyleSettings, so it
+ * reflects in-progress edits with no storage round-trip.
+ *
+ * @param {Document} doc
+ */
+export function renderPreview(doc) {
+  const styleSettings = currentStyleSettings(doc);
+  const css = buildStyleSheet(styleSettings);
+  const scoped = css
+    .split('\n')
+    .map((line) => line.replace(/^(\.anki-[a-z]+\s*\{)/, '#style-preview $1'))
+    .join('\n');
+
+  let el = doc.getElementById('style-preview-styles');
+  if (!el) {
+    el = doc.createElement('style');
+    el.id = 'style-preview-styles';
+    doc.head.appendChild(el);
+  }
+  el.textContent = scoped;
+}
+
+/**
  * Persists current style settings to storage and sends a refreshStyles message.
  *
  * @param {Document} doc
@@ -297,12 +323,15 @@ if (typeof document !== 'undefined' && ext) {
   // would overwrite real stored overrides with {} and broadcast broken styles
   // (issue #65). Listeners still flip `disabled` synchronously for responsiveness;
   // they just record that a persist is pending and flush a single onStyleChange
-  // once the populate completes, reading a fully-merged DOM.
+  // once the populate completes, reading a fully-merged DOM. The live preview
+  // (issue #46) is deferred the same way — renderPreview reads the live DOM via
+  // currentStyleSettings, so it is only trustworthy once the populate completes.
   let initialLoadComplete = false;
   let pendingPersist = false;
   const persist = () => {
     if (initialLoadComplete) {
       onStyleChange(document, storageSet, messageFn);
+      renderPreview(document);
     } else {
       pendingPersist = true;
     }
@@ -342,13 +371,14 @@ if (typeof document !== 'undefined' && ext) {
     }
   }
 
-  document.getElementById('resetStylesBtn')?.addEventListener('click', () =>
-    resetOptionsToDefaults(document, storageSet, messageFn)
-  );
+  document.getElementById('resetStylesBtn')?.addEventListener('click', () => {
+    resetOptionsToDefaults(document, storageSet, messageFn);
+    renderPreview(document);
+  });
 
   ext.storage.onChanged.addListener((changes) => {
     if ('styleSettings' in changes && !changes.styleSettings.newValue) {
-      loadStyleSettings(document, storageGet);
+      loadStyleSettings(document, storageGet).then(() => renderPreview(document));
     }
   });
 
@@ -366,5 +396,8 @@ if (typeof document !== 'undefined' && ext) {
   // window, so their change is saved against a correct, fully-merged snapshot.
   initialLoadComplete = true;
   if (pendingPersist) onStyleChange(document, storageSet, messageFn);
+  // Render the live preview (issue #46) once, now the DOM reflects the fully
+  // merged settings — currentStyleSettings is only trustworthy after populate.
+  renderPreview(document);
   refreshDictStatus(document);
 }
