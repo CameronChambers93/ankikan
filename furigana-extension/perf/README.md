@@ -1,18 +1,28 @@
 # Performance suite
 
 Benchmarks for the extension's hot paths. Plan & rationale live in
-`furigana/plans/perf-suite-plan.md`. This directory currently implements **Tier 1**
-(micro-benchmarks) and the shared fixture generator; Tier 2 (Playwright, live
-AnkiConnect) and the baseline-diff step are still to come.
+`furigana/plans/perf-suite-plan.md`. This directory implements **Tier 1**
+(micro-benchmarks) and the shared fixture generator, plus a first slice of
+**Tier 2** (Playwright, live AnkiConnect): a `browser-smoke` scenario that
+proves the `ankikan:t_*` `performance.measure()` entries emitted by
+`content.timing.js` are observable directly from the page's main world via a
+plain `page.evaluate()` — the content-script isolated world shares the frame's
+User Timing timeline, so no CDP bridge is needed (AC-54) — covering a real
+`segmentAndWrap` + live `findCards`/`cardsInfo` run end to end. The
+baseline-diff step, Long Tasks / heap-GC
+capture, `perf-scale` deck seeding (`seedAnkiPerfDeck`), larger Tier-2
+fixtures, and Tier 3 are still to come.
 
 ## Layout
 
 ```
 perf/
   fixtures/   generate.js (deterministic JA pages), corpus.js, wide-vocab.js,
-              pre-segment.js, build-fixtures.js
+              pre-segment.js, build-fixtures.js, browser-smoke.js (Tier-2 smoke page)
   lib/        prng, tokenizer (kuromoji, Node), dom (jsdom), bench (sampling harness)
   micro/      tokenize / segment / scan / text-util benchmarks + run.js orchestrator
+  e2e/        Tier-2 Playwright specs (*.perf.js) + lib/ (kuromoji dict-seed helper)
+  playwright.perf.config.js   Tier-2 Playwright config (perf/e2e, *.perf.js, headed)
   setup-anki-perf.js   deck-planning module for a perf-scale Anki deck (pure
                         computeDeckPlan + a thin, dependency-injected live-Anki shell)
   results/    JSON output (git-ignored); micro-latest.json is the newest run
@@ -27,6 +37,7 @@ PERF_SIZES=S,M PERF_SAMPLES=12 pnpm run perf:micro
 pnpm run perf:fixtures                   # write HTML pages to fixtures/pages/ (Tier-2)
 PERF_PRESEGMENT=1 pnpm run perf:fixtures # also write .presegmented.html (builds real kuromoji, slower)
 node perf/setup-anki-perf.js             # seed a perf-scale deck (requires Anki + AnkiConnect running)
+pnpm run build && pnpm run perf:e2e      # Tier-2 Playwright (requires live Anki + AnkiKan-E2E deck)
 ```
 
 Env knobs: `PERF_SIZES` (`S,M,L,XL` | `all` | `default`), `PERF_SAMPLES`,

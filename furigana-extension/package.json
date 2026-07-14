@@ -13,7 +13,8 @@
     "perf:fixtures": "node perf/fixtures/build-fixtures.js",
     "perf:micro": "node perf/micro/run.js",
     "perf:compare": "node perf/compare.mjs",
-    "perf:baseline": "node perf/micro/run.js && node perf/compare.mjs --write-baseline"
+    "perf:baseline": "node perf/micro/run.js && node perf/compare.mjs --write-baseline",
+    "perf:e2e": "playwright test --config=perf/playwright.perf.config.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
