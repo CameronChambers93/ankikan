@@ -83,7 +83,7 @@ function ensureStyleControls(doc) {
  * @param {Document} doc
  * @param {Function} storageGet - Returns Promise<{ styleSettings? }>
  */
-export async function loadStyleSettings(doc, storageGet) {
+export async function loadStyleSettings(doc, storageGet, isPreserved = () => false) {
   ensureStyleControls(doc);
 
   const data = await storageGet({ styleSettings: STYLE_DEFAULTS.styleSettings });
@@ -91,13 +91,20 @@ export async function loadStyleSettings(doc, storageGet) {
 
   for (const entry of STYLE_SCHEMA) {
     const globalEl = doc.getElementById(`global-${entry.id}`);
-    if (globalEl) globalEl.value = styleSettings.default[entry.key];
+    if (globalEl && !isPreserved(`global-${entry.id}`)) {
+      globalEl.value = styleSettings.default[entry.key];
+    }
 
     for (const cat of STYLE_CATEGORIES) {
       const overrides = styleSettings[cat] ?? {};
       const has = entry.key in overrides;
       const enabledEl = doc.getElementById(`${cat}-${entry.id}-enabled`);
       const valueEl = doc.getElementById(`${cat}-${entry.id}`);
+      // Skip controls the user already interacted with during this init cycle. The
+      // interaction (and its onStyleChange persist) is authoritative; re-applying a
+      // storage snapshot taken *before* that interaction would clobber it — e.g. an
+      // enable-checkbox the user just checked would get re-disabled here (issue #65).
+      if (isPreserved(`${cat}-${entry.id}`)) continue;
       if (enabledEl) {
         enabledEl.checked = has;
         if (valueEl) {
@@ -273,9 +280,33 @@ if (typeof document !== 'undefined' && ext) {
     }
   };
 
-  // loadStyleSettings generates the schema-driven controls, so it must run before
-  // any of the id lists below are computed against the live DOM.
-  await loadStyleSettings(document, storageGet);
+  // ensureStyleControls generates the schema-driven controls, so it must run before
+  // any of the id lists below are computed against the live DOM. It is called
+  // synchronously (not via loadStyleSettings) so that all listener wiring below is
+  // attached before any awaited storage read resolves.
+  ensureStyleControls(document);
+
+  // Tracks controls the user touches before the initial (awaited) storage read
+  // resolves, so that read's populate can skip them and not clobber a just-made
+  // change (issue #65). Only the initial loadStyleSettings call consults this.
+  const dirty = new Set();
+
+  // Persistence is DEFERRED until the initial read has populated the DOM. Until
+  // then, currentStyleSettings(doc) would serialise every untouched category as
+  // "no override" (its checkbox is still unchecked), so persisting mid-window
+  // would overwrite real stored overrides with {} and broadcast broken styles
+  // (issue #65). Listeners still flip `disabled` synchronously for responsiveness;
+  // they just record that a persist is pending and flush a single onStyleChange
+  // once the populate completes, reading a fully-merged DOM.
+  let initialLoadComplete = false;
+  let pendingPersist = false;
+  const persist = () => {
+    if (initialLoadComplete) {
+      onStyleChange(document, storageSet, messageFn);
+    } else {
+      pendingPersist = true;
+    }
+  };
 
   const colorInputIds = [];
   const numberInputIds = [];
@@ -288,22 +319,25 @@ if (typeof document !== 'undefined' && ext) {
   }
 
   colorInputIds.forEach((id) => {
-    document.getElementById(id)?.addEventListener('input', () =>
-      onStyleChange(document, storageSet, messageFn)
-    );
+    document.getElementById(id)?.addEventListener('input', () => {
+      dirty.add(id);
+      persist();
+    });
   });
   numberInputIds.forEach((id) => {
-    document.getElementById(id)?.addEventListener('change', () =>
-      onStyleChange(document, storageSet, messageFn)
-    );
+    document.getElementById(id)?.addEventListener('change', () => {
+      dirty.add(id);
+      persist();
+    });
   });
 
   for (const cat of STYLE_CATEGORIES) {
     for (const entry of STYLE_SCHEMA) {
       document.getElementById(`${cat}-${entry.id}-enabled`)?.addEventListener('change', (e) => {
+        dirty.add(`${cat}-${entry.id}`);
         const valueEl = document.getElementById(`${cat}-${entry.id}`);
         if (valueEl) valueEl.disabled = !e.target.checked;
-        onStyleChange(document, storageSet, messageFn);
+        persist();
       });
     }
   }
@@ -325,5 +359,12 @@ if (typeof document !== 'undefined' && ext) {
     const file = e.target.files[0];
     if (file) onImportDict(document, file);
   });
+
+  await loadStyleSettings(document, storageGet, (id) => dirty.has(id));
+  // The DOM is now fully populated (touched controls preserved, the rest filled
+  // from storage). Flush a single persist if the user interacted during the
+  // window, so their change is saved against a correct, fully-merged snapshot.
+  initialLoadComplete = true;
+  if (pendingPersist) onStyleChange(document, storageSet, messageFn);
   refreshDictStatus(document);
 }
