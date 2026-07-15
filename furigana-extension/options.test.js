@@ -774,6 +774,11 @@ describe('options.html unknown-category inputs (issue #33 AC-22)', () => {
     const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'options.html');
     const html = fs.readFileSync(htmlPath, 'utf8');
     doc = new JSDOM(html, { url: 'http://localhost/' }).window.document;
+    // Issue #45: unknown-category controls are generated from STYLE_SCHEMA at
+    // runtime into #style-controls, not hand-written in options.html. Run the same
+    // generation options.js performs on load before asserting the controls exist.
+    const { loadStyleSettings } = await import('./options.js');
+    await loadStyleSettings(doc, async () => ({ styleSettings: STYLE_DEFAULTS.styleSettings }));
   });
 
   it('T-33-025: options.html contains #unknown-bg-color-enabled, #unknown-bg-color, and #unknown-bg-opacity (issue #33 AC-22)', () => {

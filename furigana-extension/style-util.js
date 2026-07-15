@@ -28,6 +28,46 @@ export const BUILT_IN_STYLE_FALLBACK = {
 };
 
 /**
+ * Single source of truth for the six per-category highlight style properties.
+ * Drives both the generated CSS (buildStyleSheet, grouped by `group`) and the
+ * generated options-page controls (options.js, keyed by `id`). Adding a new
+ * property only requires a new entry here.
+ */
+export const STYLE_SCHEMA = [
+  { key: 'backgroundColor',   id: 'bg-color',       type: 'color',   group: 'fill' },
+  { key: 'backgroundOpacity', id: 'bg-opacity',      type: 'opacity', group: 'fill',   pairsWith: 'backgroundColor' },
+  { key: 'borderRadius',      id: 'border-radius',   type: 'px',      group: 'shape',  min: 0, max: 20 },
+  { key: 'outlineColor',      id: 'outline-color',   type: 'color',   group: 'border' },
+  { key: 'outlineOpacity',    id: 'outline-opacity', type: 'opacity', group: 'border', pairsWith: 'outlineColor' },
+  { key: 'outlineWidth',      id: 'outline-width',   type: 'px',      group: 'border', min: 0, max: 6 },
+];
+
+/** Anki status categories, in the exact order buildStyleSheet renders their CSS rules. */
+export const STYLE_CATEGORIES = ['unknown', 'unlearned', 'learning', 'learned'];
+
+/**
+ * Renders the CSS declaration(s) for one STYLE_SCHEMA `group`, given a fully
+ * resolved style object for a category (see resolveCategory). Each group maps
+ * to exactly one declaration in the rendered `.anki-<cat>` rule.
+ */
+const CSS_GROUP_RENDERERS = {
+  fill: (s) => {
+    const bg = hexToRgb(s.backgroundColor);
+    const bgColor = bg ? `rgba(${bg.r}, ${bg.g}, ${bg.b}, ${s.backgroundOpacity})` : 'transparent';
+    return `background-color: ${bgColor};`;
+  },
+  shape: (s) => `border-radius: ${s.borderRadius}px;`,
+  border: (s) => {
+    const ol = hexToRgb(s.outlineColor);
+    const olColor = ol ? `rgba(${ol.r}, ${ol.g}, ${ol.b}, ${s.outlineOpacity})` : 'transparent';
+    return `outline: ${s.outlineWidth}px solid ${olColor};`;
+  },
+};
+
+/** Declaration order within a `.anki-<cat> { … }` rule, matching the pre-refactor output. */
+const CSS_GROUP_ORDER = ['fill', 'shape', 'border'];
+
+/**
  * Parses a 3- or 6-digit CSS hex color string into `{r, g, b}` integer components.
  * Returns `null` for any input that isn't a valid hex color.
  */
@@ -115,13 +155,9 @@ export function injectStyles(doc, styleSettings) {
 }
 
 export function buildStyleSheet(styleSettings) {
-  const categories = ['unknown', 'unlearned', 'learning', 'learned'];
-  return categories.map((cat) => {
+  return STYLE_CATEGORIES.map((cat) => {
     const s = resolveCategory(styleSettings, cat);
-    const bg = hexToRgb(s.backgroundColor);
-    const ol = hexToRgb(s.outlineColor);
-    const bgColor = bg ? `rgba(${bg.r}, ${bg.g}, ${bg.b}, ${s.backgroundOpacity})` : 'transparent';
-    const olColor = ol ? `rgba(${ol.r}, ${ol.g}, ${ol.b}, ${s.outlineOpacity})` : 'transparent';
-    return `.anki-${cat} { background-color: ${bgColor}; border-radius: ${s.borderRadius}px; outline: ${s.outlineWidth}px solid ${olColor}; }`;
+    const decls = CSS_GROUP_ORDER.map((group) => CSS_GROUP_RENDERERS[group](s)).join(' ');
+    return `.anki-${cat} { ${decls} }`;
   }).join('\n');
 }
