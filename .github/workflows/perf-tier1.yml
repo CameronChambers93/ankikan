@@ -1,0 +1,40 @@
+name: Perf Tier-1 (nightly, advisory)
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  tier1-perf:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: furigana-extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Restore CI perf baseline
+        uses: actions/cache@v4
+        with:
+          path: furigana-extension/perf/baseline.ci.json
+          key: perf-tier1-baseline-${{ github.run_id }}
+          restore-keys: |
+            perf-tier1-baseline-
+      - run: pnpm run perf:micro
+      - name: Compare against CI baseline (advisory)
+        run: |
+          node perf/compare.mjs \
+            --baseline perf/baseline.ci.json \
+            --current perf/results/micro-latest.json \
+            --seed-on-missing \
+            --markdown-out "$GITHUB_STEP_SUMMARY"
+      - name: Refresh CI baseline for next run
+        run: node perf/compare.mjs --write-baseline --baseline perf/baseline.ci.json --current perf/results/micro-latest.json

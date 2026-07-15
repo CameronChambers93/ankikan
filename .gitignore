@@ -6,6 +6,7 @@ playwright-report/
 # Perf suite generated artifacts (committed baseline is kept; runs/pages are not)
 furigana-extension/perf/results/
 furigana-extension/perf/fixtures/pages/
+furigana-extension/perf/baseline.ci.json
 
 # Project-specific
 .venv/

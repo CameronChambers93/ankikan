@@ -19,7 +19,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { record } from './lib/bench.js';
-import { compareRuns, DEFAULT_TOLERANCES, formatBaselineWrite, keyOf, main } from './compare.mjs';
+import {
+  compareRuns,
+  DEFAULT_TOLERANCES,
+  formatBaselineWrite,
+  formatMarkdownSummary,
+  keyOf,
+  main,
+} from './compare.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -46,6 +53,27 @@ function mkRecord({ suite = 'tokenize', scenario = 'dense', size = 'M', variant 
     variant,
     stats: { p50, p95: p95 ?? p50, max: max ?? p50, mean: mean ?? p50, n },
   });
+}
+
+/**
+ * Builds a compareRuns() result carrying one finding of every status
+ * (ok/regression/improvement/new/dropped) in a single table, so the
+ * formatMarkdownSummary tests below can exercise every row kind at once.
+ */
+function makeMixedResult() {
+  const baseline = makeRun([
+    mkRecord({ scenario: 'steady', p50: 50, p95: 60, max: 70 }),
+    mkRecord({ scenario: 'slower', p50: 100, p95: 150, max: 200 }),
+    mkRecord({ scenario: 'faster', p50: 100, p95: 150, max: 200 }),
+    mkRecord({ scenario: 'retired', p50: 10, p95: 15, max: 20 }),
+  ]);
+  const current = makeRun([
+    mkRecord({ scenario: 'steady', p50: 50, p95: 60, max: 70 }),
+    mkRecord({ scenario: 'slower', p50: 120, p95: 150, max: 200 }),
+    mkRecord({ scenario: 'faster', p50: 70, p95: 150, max: 200 }),
+    mkRecord({ scenario: 'brand-new', p50: 30, p95: 40, max: 50 }),
+  ]);
+  return compareRuns(baseline, current);
 }
 
 describe('compareRuns — identical runs', () => {
@@ -319,5 +347,253 @@ describe('compareRuns — zero-baseline edge cases', () => {
     expect(result.findings[0].gates.absolute.tripped).toBe(true);
     expect(result.findings[0].gates.relative.tripped).toBe(true);
     expect(result.findings[0].status).toBe('regression');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 6 — CI phase 1 (issue #44 AC 68-82).
+//
+// formatMarkdownSummary is a new pure export that renders a compareRuns()
+// result as a GitHub-flavored markdown table for $GITHUB_STEP_SUMMARY, and
+// main() grows two flags (--seed-on-missing, --markdown-out) so a nightly CI
+// job can self-seed a missing perf/baseline.ci.json and post the table to the
+// job summary. None of this exists yet — formatMarkdownSummary resolves to
+// `undefined` on import (Vite/esbuild's ESM interop tolerates a missing named
+// export at load time), so every test below fails when it is invoked, and the
+// new `main` flags are silently no-ops in the current parseArgs, so the
+// --seed-on-missing / --markdown-out tests fail on real assertion mismatches
+// (wrong exit code, appendFile never called) rather than an import-time crash.
+// ---------------------------------------------------------------------------
+
+describe('formatMarkdownSummary — table shape', () => {
+  it('T-44-073 a result mixing ok/regression/improvement/new/dropped findings renders a GFM table with one data row per finding', () => {
+    const result = makeMixedResult();
+    const md = formatMarkdownSummary(result);
+
+    const tableLines = md.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('|'));
+
+    // Header row names the Status column; the line immediately after it is the
+    // GFM separator row (a run of `| --- |`-style cells).
+    expect(tableLines[0]).toMatch(/\|\s*Status\s*\|/i);
+    expect(tableLines[1]).toMatch(/^\|(\s*-+\s*\|)+$/);
+
+    // Exactly one data row per finding — no dropped rows, no duplicated rows.
+    const dataRows = tableLines.slice(2);
+    expect(dataRows).toHaveLength(result.findings.length);
+  });
+});
+
+describe('formatMarkdownSummary — status token distinctness', () => {
+  it('T-44-074 the regression row carries a status token distinct from the ok/improvement rows', () => {
+    const result = makeMixedResult();
+    const md = formatMarkdownSummary(result);
+    const lines = md.split('\n');
+
+    const regressionLine = lines.find((l) => l.includes('slower'));
+    const okLine = lines.find((l) => l.includes('steady'));
+    const improvementLine = lines.find((l) => l.includes('faster'));
+
+    expect(regressionLine).toMatch(/REGRESSION/);
+    expect(okLine).not.toMatch(/REGRESSION/);
+    expect(improvementLine).not.toMatch(/REGRESSION/);
+  });
+});
+
+describe('formatMarkdownSummary — new/dropped placeholders', () => {
+  it('T-44-075 new and dropped rows render an em-dash placeholder in the p50/delta columns, never NaN/undefined, and do not throw', () => {
+    const result = makeMixedResult();
+
+    expect(() => formatMarkdownSummary(result)).not.toThrow();
+    const md = formatMarkdownSummary(result);
+    const lines = md.split('\n');
+
+    const newLine = lines.find((l) => l.includes('brand-new'));
+    const droppedLine = lines.find((l) => l.includes('retired'));
+
+    expect(newLine).toContain('—');
+    expect(droppedLine).toContain('—');
+    expect(md).not.toMatch(/NaN/);
+    expect(md).not.toMatch(/undefined/);
+  });
+});
+
+describe('formatMarkdownSummary — trailing summary line', () => {
+  it('T-44-076 the output ends with a summary line whose ok/regression/improvement/new/dropped counts equal result.summary', () => {
+    const result = makeMixedResult();
+    const md = formatMarkdownSummary(result);
+
+    const okMatch = md.match(/ok=(\d+)/);
+    const regressionMatch = md.match(/regression=(\d+)/);
+    const improvementMatch = md.match(/improvement=(\d+)/);
+    const newMatch = md.match(/new=(\d+)/);
+    const droppedMatch = md.match(/dropped=(\d+)/);
+
+    expect(okMatch).not.toBeNull();
+    expect(regressionMatch).not.toBeNull();
+    expect(improvementMatch).not.toBeNull();
+    expect(newMatch).not.toBeNull();
+    expect(droppedMatch).not.toBeNull();
+
+    expect(Number(okMatch[1])).toBe(result.summary.ok);
+    expect(Number(regressionMatch[1])).toBe(result.summary.regression);
+    expect(Number(improvementMatch[1])).toBe(result.summary.improvement);
+    expect(Number(newMatch[1])).toBe(result.summary.new);
+    expect(Number(droppedMatch[1])).toBe(result.summary.dropped);
+
+    // "Ends with" — the summary text must live in the back half of the output,
+    // after the table, not buried above it.
+    const trimmed = md.trimEnd();
+    const summaryLineIndex = trimmed.lastIndexOf('ok=');
+    expect(summaryLineIndex).toBeGreaterThan(trimmed.length / 2);
+  });
+});
+
+describe('formatMarkdownSummary — seeded notice', () => {
+  it('T-44-077 opts.seeded true adds a baseline-seeded notice absent from the unseeded call', () => {
+    const result = makeMixedResult();
+
+    const unseeded = formatMarkdownSummary(result);
+    const seeded = formatMarkdownSummary(result, { seeded: true });
+
+    expect(unseeded).not.toMatch(/seeded from this run/i);
+    expect(seeded).toMatch(/seeded from this run/i);
+  });
+});
+
+describe('main — --seed-on-missing with missing baseline', () => {
+  it('T-44-078 seeds the baseline from the current run, logs a seed notice, and returns exit code 0 with zero regressions', async () => {
+    const current = makeRun([mkRecord({ p50: 42, p95: 55, max: 70 })]);
+    const currentJson = JSON.stringify(current);
+    const io = {
+      readFile: vi.fn((p) => {
+        if (p === 'baseline.ci.json') throw new Error('ENOENT: no such file or directory');
+        return currentJson;
+      }),
+      writeFile: vi.fn(),
+      appendFile: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const exitCode = await main(
+      ['--baseline', 'baseline.ci.json', '--current', 'current.json', '--seed-on-missing'],
+      io
+    );
+
+    expect(exitCode).toBe(0);
+    expect(io.writeFile).toHaveBeenCalledTimes(1);
+
+    const [writtenPath, writtenData] = io.writeFile.mock.calls[0];
+    expect(writtenPath).toBe('baseline.ci.json');
+    expect(JSON.parse(writtenData)).toEqual(current);
+
+    // Self-diff (seeded baseline === current) must produce zero regressions,
+    // and main must have logged some indication that it seeded rather than compared.
+    const loggedText = io.log.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(loggedText).toMatch(/seed/i);
+    expect(loggedText).toMatch(/regression=0/);
+  });
+});
+
+describe('main — missing baseline without --seed-on-missing', () => {
+  it('T-44-079 returns exit code 1 and never writes a baseline when the baseline file is missing', async () => {
+    const current = makeRun([mkRecord({ p50: 42, p95: 55, max: 70 })]);
+    const currentJson = JSON.stringify(current);
+    const io = {
+      readFile: vi.fn((p) => {
+        if (p === 'baseline.ci.json') throw new Error('ENOENT: no such file or directory');
+        return currentJson;
+      }),
+      writeFile: vi.fn(),
+      appendFile: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const exitCode = await main(['--baseline', 'baseline.ci.json', '--current', 'current.json'], io);
+
+    expect(exitCode).toBe(1);
+    expect(io.writeFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('main — --markdown-out appends the formatted summary', () => {
+  it('T-44-080 appends formatMarkdownSummary(result) exactly once to the given path on a normal compare run', async () => {
+    const baseline = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })]);
+    const current = makeRun([mkRecord({ p50: 120, p95: 150, max: 200 })]);
+    const baselineJson = JSON.stringify(baseline);
+    const currentJson = JSON.stringify(current);
+    const io = {
+      readFile: (p) => (p === 'baseline.json' ? baselineJson : currentJson),
+      writeFile: vi.fn(),
+      appendFile: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    await main(
+      ['--baseline', 'baseline.json', '--current', 'current.json', '--markdown-out', 'summary.md'],
+      io
+    );
+
+    // Computed independently from the same in-memory fixtures, never hardcoded,
+    // so this proves main appends the *actual* formatted result, not a stand-in string.
+    const expectedResult = compareRuns(JSON.parse(baselineJson), JSON.parse(currentJson));
+    const expectedMd = formatMarkdownSummary(expectedResult, { seeded: false }) + '\n';
+
+    expect(io.appendFile).toHaveBeenCalledTimes(1);
+    const [appendedPath, appendedData] = io.appendFile.mock.calls[0];
+    expect(appendedPath).toBe('summary.md');
+    expect(appendedData).toBe(expectedMd);
+  });
+});
+
+describe('main — no --markdown-out', () => {
+  it('T-44-081 never calls io.appendFile when --markdown-out is not given', async () => {
+    const baseline = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })]);
+    const current = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })]);
+    const io = {
+      readFile: (p) => (p === 'baseline.json' ? JSON.stringify(baseline) : JSON.stringify(current)),
+      writeFile: vi.fn(),
+      appendFile: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    await main(['--baseline', 'baseline.json', '--current', 'current.json'], io);
+
+    expect(io.appendFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('main — combined --seed-on-missing and --markdown-out', () => {
+  it('T-44-082 the single appended string contains both the seeded notice and a regression=0 summary line', async () => {
+    const current = makeRun([mkRecord({ p50: 42, p95: 55, max: 70 })]);
+    const currentJson = JSON.stringify(current);
+    const io = {
+      readFile: vi.fn((p) => {
+        if (p === 'baseline.ci.json') throw new Error('ENOENT: no such file or directory');
+        return currentJson;
+      }),
+      writeFile: vi.fn(),
+      appendFile: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    await main(
+      [
+        '--baseline', 'baseline.ci.json',
+        '--current', 'current.json',
+        '--seed-on-missing',
+        '--markdown-out', 'summary.md',
+      ],
+      io
+    );
+
+    expect(io.appendFile).toHaveBeenCalledTimes(1);
+    const [, appendedData] = io.appendFile.mock.calls[0];
+    expect(appendedData).toMatch(/seeded from this run/i);
+    expect(appendedData).toMatch(/regression=0/);
   });
 });

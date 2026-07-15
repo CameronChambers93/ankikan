@@ -136,6 +136,8 @@ function parseArgs(argv) {
     current: 'perf/results/micro-latest.json',
     check: false,
     writeBaseline: false,
+    seedOnMissing: false,
+    markdownOut: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -143,6 +145,8 @@ function parseArgs(argv) {
     else if (a === '--current') args.current = argv[++i];
     else if (a === '--check' || a === '--strict') args.check = true;
     else if (a === '--write-baseline') args.writeBaseline = true;
+    else if (a === '--seed-on-missing') args.seedOnMissing = true;
+    else if (a === '--markdown-out') args.markdownOut = argv[++i];
   }
   return args;
 }
@@ -165,9 +169,60 @@ function formatSummary(result) {
   return lines.join('\n');
 }
 
+function fmtMs(ms) {
+  return `${ms.toFixed(2)}ms`;
+}
+
+function fmtDeltaMs(ms) {
+  const sign = ms > 0 ? '+' : '';
+  return `${sign}${ms.toFixed(2)}ms`;
+}
+
+function fmtPct(pct) {
+  if (!Number.isFinite(pct)) return pct > 0 ? '+∞%' : '-∞%';
+  const sign = pct > 0 ? '+' : '';
+  return `${sign}${(pct * 100).toFixed(1)}%`;
+}
+
+/**
+ * Renders a compareRuns() result as a GitHub-flavored markdown table, suitable
+ * for appending to $GITHUB_STEP_SUMMARY. Pure — takes no fs/process dependency.
+ *
+ * @param {object} result - Output of compareRuns().
+ * @param {{seeded?: boolean}} [opts]
+ * @returns {string}
+ */
+export function formatMarkdownSummary(result, opts = {}) {
+  const lines = ['## Tier-1 Performance Summary', ''];
+  if (opts.seeded) {
+    lines.push('> Baseline seeded from this run (no prior baseline found).', '');
+  }
+  lines.push('| Status | Suite/Scenario/Size/Variant | Baseline p50 | Current p50 | Δ p50 | Δ % |');
+  lines.push('| --- | --- | --- | --- | --- | --- |');
+  for (const f of result.findings) {
+    const k = `${f.key.suite}/${f.key.scenario}/${f.key.size ?? '-'}/${f.key.variant ?? '-'}`;
+    const status = f.status.toUpperCase();
+    if (f.status === 'new' || f.status === 'dropped') {
+      lines.push(`| ${status} | ${k} | — | — | — | — |`);
+    } else {
+      lines.push(
+        `| ${status} | ${k} | ${fmtMs(f.baseline.p50)} | ${fmtMs(f.current.p50)} | ` +
+        `${fmtDeltaMs(f.delta.p50Ms)} | ${fmtPct(f.delta.p50Pct)} |`
+      );
+    }
+  }
+  lines.push('');
+  lines.push(
+    `**Summary:** ok=${result.summary.ok} regression=${result.summary.regression} ` +
+    `improvement=${result.summary.improvement} new=${result.summary.new} dropped=${result.summary.dropped}`
+  );
+  return lines.join('\n');
+}
+
 const defaultIo = {
   readFile: (p) => fs.readFileSync(p, 'utf-8'),
   writeFile: (p, data) => fs.writeFileSync(p, data),
+  appendFile: (p, data) => fs.appendFileSync(p, data),
   log: (...a) => console.log(...a),
   error: (...a) => console.error(...a),
 };
@@ -180,7 +235,14 @@ const defaultIo = {
  * @returns {Promise<number>} process exit code
  */
 export async function main(argv = [], io = defaultIo) {
-  const { baseline: baselinePath, current: currentPath, check, writeBaseline } = parseArgs(argv);
+  const {
+    baseline: baselinePath,
+    current: currentPath,
+    check,
+    writeBaseline,
+    seedOnMissing,
+    markdownOut,
+  } = parseArgs(argv);
 
   try {
     if (writeBaseline) {
@@ -191,13 +253,28 @@ export async function main(argv = [], io = defaultIo) {
       return 0;
     }
 
-    const baselineRaw = await io.readFile(baselinePath);
     const currentRaw = await io.readFile(currentPath);
-    const baseline = JSON.parse(baselineRaw);
     const current = JSON.parse(currentRaw);
+
+    let baseline;
+    let seeded = false;
+    try {
+      const baselineRaw = await io.readFile(baselinePath);
+      baseline = JSON.parse(baselineRaw);
+    } catch (err) {
+      if (!seedOnMissing) throw err;
+      seeded = true;
+      baseline = current;
+      await io.writeFile(baselinePath, JSON.stringify(formatBaselineWrite(current), null, 2));
+      io.log(`No baseline found at ${baselinePath}; seeding from this run.`);
+    }
 
     const result = compareRuns(baseline, current);
     io.log(formatSummary(result));
+
+    if (markdownOut) {
+      await io.appendFile(markdownOut, formatMarkdownSummary(result, { seeded }) + '\n');
+    }
 
     return check && result.summary.regression > 0 ? 1 : 0;
   } catch (err) {

@@ -13,6 +13,7 @@
     "perf:fixtures": "node perf/fixtures/build-fixtures.js",
     "perf:micro": "node perf/micro/run.js",
     "perf:compare": "node perf/compare.mjs",
+    "perf:compare:ci": "node perf/compare.mjs --baseline perf/baseline.ci.json --current perf/results/micro-latest.json --seed-on-missing",
     "perf:baseline": "node perf/micro/run.js && node perf/compare.mjs --write-baseline",
     "perf:e2e": "playwright test --config=perf/playwright.perf.config.js"
   },

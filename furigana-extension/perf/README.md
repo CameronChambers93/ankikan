@@ -80,8 +80,22 @@ already in "post-scan" markup state — used to isolate `scanPage`'s cost from
 `segmentAndWrap`'s in Tier-2 scenarios. It takes `tokenize` as a parameter so
 tests can pass a fast stub while `build-fixtures.js` passes the real tokenizer.
 
+## CI (nightly, advisory)
+
+`.github/workflows/perf-tier1.yml` runs `perf:micro` nightly and compares it
+against `perf/baseline.ci.json` — a rolling, **git-ignored** baseline distinct
+from the committed `baseline.local.json` (a dev-machine snapshot used for
+local `perf:compare`/`perf:baseline` runs). The CI baseline is cached between
+runs and self-seeds via `compare.mjs --seed-on-missing` on first use, so the
+workflow never fails a build (advisory only — no `--check`). Results are
+posted to the job summary via `compare.mjs --markdown-out "$GITHUB_STEP_SUMMARY"`.
+
+`compare.mjs` flags added for this: `--seed-on-missing` (write the baseline
+from the current run instead of erroring when it's missing) and
+`--markdown-out <path>` (append a GFM table + summary line to the given file).
+
 ## Notes
 
 - Fixtures are fully deterministic (fixed seed) — do not swap in `Math.random`.
-- `results/` and `fixtures/pages/` are git-ignored; only the (future) committed
-  `baseline.json` is tracked.
+- `results/` and `fixtures/pages/` are git-ignored; only the committed
+  `baseline.local.json` is tracked (`baseline.ci.json` is CI-only and git-ignored).
