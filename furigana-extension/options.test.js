@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { STYLE_DEFAULTS, BUILT_IN_STYLE_FALLBACK } from './style-util.js';
 
@@ -793,5 +793,284 @@ describe('options.html unknown-category inputs (issue #33 AC-22)', () => {
     expect(colorEl, '#unknown-bg-color must exist in options.html').not.toBeNull();
     expect(colorEl.type).toBe('color');
     expect(opacityEl, '#unknown-bg-opacity must exist in options.html').not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #65 — Options page init race
+//
+// options.js's browser-wiring block awaits loadStyleSettings(document, storageGet)
+// — a Chrome IPC round-trip — before wiring the colour-input, number-input, and
+// enable-checkbox listeners. A change/input event fired in the gap between "DOM
+// built" and "listeners attached" is silently dropped, leaving the paired colour
+// input's `disabled` flag stuck. These tests load options.js the same way
+// popup.test.js's loadPopupWithFakeExt loads popup.js: inject a fake `chrome` on
+// globalThis before a dynamic import, with storage.local.get capturing its
+// callback but never invoking it, so the top-level await never settles and the
+// exact "gap" the bug lives in is held open for inspection.
+//
+// Corrected contract (see plans/issue-65): listeners are wired synchronously so
+// interactions during the gap are never dropped, but the persist they trigger
+// (onStyleChange -> storage.local.set) must be DEFERRED until the initial
+// storageGet resolves and the DOM is fully populated. Persisting synchronously
+// during the gap would serialise every OTHER untouched category as `{}`
+// (currentStyleSettings reads the live DOM), clobbering pre-existing per-category
+// overrides in storage. T-65-009 is the regression test for that corruption.
+// ---------------------------------------------------------------------------
+
+describe('options.js init race (issue #65)', () => {
+  const originalDocument = globalThis.document;
+  let capturedGetCallback;
+
+  beforeEach(() => {
+    vi.resetModules();
+    capturedGetCallback = undefined;
+  });
+
+  afterEach(() => {
+    delete globalThis.chrome;
+    globalThis.document = originalDocument;
+  });
+
+  /** Loads the real options.html from disk so #style-controls is the actual production container. */
+  async function loadOptionsDocFromDisk() {
+    const fs = await import('fs');
+    const path = await import('path');
+    const htmlPath = path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'), '..', 'options.html');
+    const html = fs.readFileSync(htmlPath, 'utf8');
+    return new JSDOM(html, { url: 'http://localhost/' }).window.document;
+  }
+
+  /**
+   * A fake ext object whose storage.local.get captures its callback (into the
+   * outer `capturedGetCallback`) but never invokes it — this holds the module's
+   * top-level `await loadStyleSettings(...)` open indefinitely so each test can
+   * inspect the DOM/listener state exactly as it exists in the vulnerable gap.
+   */
+  function makeFakeExt() {
+    return {
+      storage: {
+        local: {
+          get: vi.fn((defaults, cb) => { capturedGetCallback = cb; }),
+          set: vi.fn((data, cb) => { if (cb) cb(); }),
+        },
+        onChanged: { addListener: vi.fn() },
+      },
+      tabs: {
+        query: vi.fn().mockResolvedValue([]),
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+      },
+    };
+  }
+
+  /**
+   * Loads options.js with a fake ext injected on globalThis.chrome and a real
+   * options.html document on globalThis.document, then waits for the synchronous
+   * portion of module init (schema-driven control generation) to complete.
+   *
+   * The import itself must NOT be awaited directly here — options.js has a
+   * top-level `await loadStyleSettings(...)` that will not settle until
+   * `capturedGetCallback` is invoked, so awaiting the import promise would
+   * deadlock the test. Callers receive { doc, ext, importPromise } and decide
+   * whether/when to resolve the deferred storage read.
+   */
+  async function loadOptionsWithFakeExt() {
+    vi.mock('./dict-store.js', () => ({
+      hasDictionary: vi.fn().mockResolvedValue(false),
+      saveDictionary: vi.fn().mockResolvedValue(undefined),
+    }));
+    const doc = await loadOptionsDocFromDisk();
+    const ext = makeFakeExt();
+    globalThis.chrome = ext;
+    globalThis.document = doc;
+    const importPromise = import('./options.js');
+    // Sync on the synchronous part of init completing (schema-driven controls
+    // generated into #style-controls) before the module suspends on storageGet.
+    await vi.waitFor(() => {
+      expect(doc.getElementById('unlearned-bg-color-enabled')).not.toBeNull();
+    });
+    return { doc, ext, importPromise };
+  }
+
+  // -------------------------------------------------------------------------
+  // AC1/AC2 — enable-checkbox change toggles disabled synchronously, before
+  // the initial storageGet has resolved
+  // -------------------------------------------------------------------------
+
+  it('T-65-001 checking the enable checkbox before storageGet resolves enables the paired colour input synchronously', async () => {
+    // Under the bug, the enable-checkbox listener is wired only after the
+    // top-level await settles; with a storageGet that never resolves, the
+    // listener must already be attached or this checkbox interaction has no
+    // effect and the colour input stays disabled forever (issue #65 AC1).
+    const { doc } = await loadOptionsWithFakeExt();
+    const checkbox = doc.getElementById('unlearned-bg-color-enabled');
+    const colorInput = doc.getElementById('unlearned-bg-color');
+
+    // Simulate the realistic pre-interaction state: not yet overridden.
+    checkbox.checked = false;
+    colorInput.disabled = true;
+
+    checkbox.click(); // toggles checked to true and fires a native 'change' event
+
+    expect(colorInput.disabled).toBe(false);
+  });
+
+  it('T-65-002 unchecking the enable checkbox before storageGet resolves disables the paired colour input synchronously', async () => {
+    // Same gap, opposite direction: turning an override off before the initial
+    // storage read resolves must re-disable the colour input immediately
+    // (issue #65 AC2).
+    const { doc } = await loadOptionsWithFakeExt();
+    const checkbox = doc.getElementById('unlearned-bg-color-enabled');
+    const colorInput = doc.getElementById('unlearned-bg-color');
+
+    // Simulate an already-active override.
+    checkbox.checked = true;
+    colorInput.disabled = false;
+
+    checkbox.click(); // toggles checked to false and fires a native 'change' event
+
+    expect(colorInput.disabled).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // AC3 — all three listener families are attached synchronously, before
+  // storageGet resolves, but their persist is DEFERRED until the initial read
+  // resolves (see corrected-contract note above the describe block).
+  // -------------------------------------------------------------------------
+
+  it('T-65-003 the colour-input "input" listener is attached synchronously and its persist is deferred until the initial read resolves', async () => {
+    // Attachment alone is not observable without a side effect, so we use the
+    // eventual persist as the probe: if the listener were attached only after
+    // the top-level await settled (the original bug), this dispatched event
+    // would be silently dropped, nothing would be marked pending, and no
+    // flush would occur even after resolve — `set` would never be called.
+    const { doc, ext, importPromise } = await loadOptionsWithFakeExt();
+    const colorInput = doc.getElementById('global-bg-color');
+
+    colorInput.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+
+    // The persist must NOT happen synchronously during the race window — doing
+    // so would serialise every other untouched category's inputs (still at
+    // their pre-populate defaults) and clobber real stored overrides (issue
+    // #65 corrected contract; see T-65-009 for the corruption this prevents).
+    expect(ext.storage.local.set).not.toHaveBeenCalled();
+
+    capturedGetCallback({ styleSettings: STYLE_DEFAULTS.styleSettings });
+    await importPromise;
+
+    // Once the initial read resolves and the DOM is fully populated, the
+    // pending interaction must be flushed exactly once.
+    expect(ext.storage.local.set).toHaveBeenCalled();
+  });
+
+  it('T-65-004 the number-input "change" listener is attached synchronously and its persist is deferred until the initial read resolves', async () => {
+    // Opacity/px inputs use a "change" listener rather than "input"; it must
+    // also be wired before the deferred storage read settles, but its persist
+    // must likewise wait for the flush rather than firing mid-window
+    // (issue #65 corrected contract, number-input family).
+    const { doc, ext, importPromise } = await loadOptionsWithFakeExt();
+    const numberInput = doc.getElementById('global-bg-opacity');
+
+    numberInput.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+
+    expect(ext.storage.local.set).not.toHaveBeenCalled();
+
+    capturedGetCallback({ styleSettings: STYLE_DEFAULTS.styleSettings });
+    await importPromise;
+
+    expect(ext.storage.local.set).toHaveBeenCalled();
+  });
+
+  it('T-65-005 the enable-checkbox "change" listener defers its persist, flushing once the initial read resolves', async () => {
+    // T-65-001/T-65-002 already cover the synchronous `disabled` flip; this
+    // test covers the separate persistence contract — a naive fix that only
+    // reorders the disabled-toggle without deferring onStyleChange would
+    // still corrupt storage during the race window (issue #65 corrected
+    // contract, enable-checkbox family).
+    const { doc, ext, importPromise } = await loadOptionsWithFakeExt();
+    const checkbox = doc.getElementById('learning-bg-color-enabled');
+
+    checkbox.click();
+
+    expect(ext.storage.local.set).not.toHaveBeenCalled();
+
+    capturedGetCallback({ styleSettings: STYLE_DEFAULTS.styleSettings });
+    await importPromise;
+
+    expect(ext.storage.local.set).toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // AC4 — population still works correctly once the deferred storageGet
+  // eventually resolves (no regression from reordering)
+  // -------------------------------------------------------------------------
+
+  it('T-65-006 loadStyleSettings still populates values correctly after the deferred storageGet resolves', async () => {
+    // Reordering the init block must not break the original population path;
+    // once storage finally responds, stored values must still reach the DOM
+    // (issue #65 AC4 — no regression).
+    const { doc, importPromise } = await loadOptionsWithFakeExt();
+    const stored = {
+      ...STYLE_DEFAULTS.styleSettings,
+      default: { ...STYLE_DEFAULTS.styleSettings.default, backgroundColor: '#ff3300' },
+    };
+
+    capturedGetCallback({ styleSettings: stored });
+    await importPromise;
+
+    expect(doc.getElementById('global-bg-color').value).toBe('#ff3300');
+  });
+
+  // -------------------------------------------------------------------------
+  // AC7 — ensureStyleControls stays idempotent across the sync-init call and
+  // the call inside loadStyleSettings
+  // -------------------------------------------------------------------------
+
+  it('T-65-007 ensureStyleControls does not duplicate controls when called both from sync init and from loadStyleSettings', async () => {
+    // The fix calls ensureStyleControls synchronously during init (so listeners
+    // have real elements to attach to) and loadStyleSettings calls it again
+    // internally once storage resolves; the guard clause must prevent a second,
+    // duplicate set of per-category controls from being appended to
+    // #style-controls (issue #65 AC7).
+    const { doc, importPromise } = await loadOptionsWithFakeExt();
+    capturedGetCallback({ styleSettings: STYLE_DEFAULTS.styleSettings });
+    await importPromise;
+
+    expect(doc.querySelectorAll('#unlearned-bg-color').length).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Corruption regression — a race-window interaction must not wipe other
+  // categories' pre-existing stored overrides once the deferred flush fires.
+  // -------------------------------------------------------------------------
+
+  it('T-65-009 a race-window interaction does not clobber other categories\' stored overrides when the deferred read resolves', async () => {
+    // currentStyleSettings(doc) serialises EVERY category from the live DOM.
+    // If a listener persisted synchronously during the init window, it would
+    // capture the pre-populate DOM state — untouched categories still
+    // unchecked, so they serialise to `{}` — and write that half-populated
+    // snapshot over the real stored overrides. The corrected contract defers
+    // the persist until after populate, so the single flushed write must
+    // carry both the pre-existing overrides AND the user's new interaction.
+    const { doc, ext, importPromise } = await loadOptionsWithFakeExt();
+    const stored = {
+      ...STYLE_DEFAULTS.styleSettings,
+      default: { ...STYLE_DEFAULTS.styleSettings.default },
+      learned:  { backgroundColor: '#112233' },
+      learning: { backgroundColor: '#445566' },
+    };
+
+    // During the window (before the read resolves), the user checks a
+    // DIFFERENT category than the ones with pre-existing overrides above.
+    doc.getElementById('unlearned-bg-color-enabled').click();
+
+    capturedGetCallback({ styleSettings: stored });
+    await importPromise;
+
+    expect(ext.storage.local.set).toHaveBeenCalled();
+    const lastPayload = ext.storage.local.set.mock.calls.at(-1)[0].styleSettings;
+    expect(lastPayload.learned.backgroundColor).toBe('#112233');
+    expect(lastPayload.learning.backgroundColor).toBe('#445566');
+    expect(lastPayload.unlearned).toHaveProperty('backgroundColor');
   });
 });
