@@ -8,10 +8,15 @@ proves the `ankikan:t_*` `performance.measure()` entries emitted by
 `content.timing.js` are observable directly from the page's main world via a
 plain `page.evaluate()` — the content-script isolated world shares the frame's
 User Timing timeline, so no CDP bridge is needed (AC-54) — covering a real
-`segmentAndWrap` + live `findCards`/`cardsInfo` run end to end. The
-baseline-diff step, Long Tasks / heap-GC
-capture, `perf-scale` deck seeding (`seedAnkiPerfDeck`), larger Tier-2
-fixtures, and Tier 3 are still to come.
+`segmentAndWrap` + live `findCards`/`cardsInfo` run end to end. A **Long Tasks
+observer** (`e2e/lib/longtask-observer.js`) registered via `page.addInitScript`
+before `document_idle` also captures the synchronous main-thread blocking from
+the local-mode kuromoji tokenize + `segmentAndWrap` pass on a dense-L page, and
+the pure `lib/longtask.js` `summarizeLongTasks` aggregator reports its
+total/longest durations (closes out the capability previously tracked as
+"AC-67"). The `compare.mjs` baseline-diff of long-task/heap numbers,
+`perf-scale` deck seeding (`seedAnkiPerfDeck`), and larger Tier-2 fixtures are
+still to come.
 
 ## Layout
 
