@@ -175,7 +175,7 @@ function parseArgs(argv) {
   return args;
 }
 
-function formatSummary(result) {
+export function formatSummary(result) {
   const lines = [`Tier: ${result.tier} (tolerance ${JSON.stringify(result.tolerance)})`];
   for (const f of result.findings) {
     const k = `${f.key.suite}/${f.key.scenario}/${f.key.size ?? '-'}/${f.key.variant ?? '-'}`;
@@ -183,7 +183,9 @@ function formatSummary(result) {
       lines.push(`  ${f.status.toUpperCase().padEnd(10)}${k}`);
     } else {
       const pct = (f.delta.p50Pct * 100).toFixed(1);
-      lines.push(`  ${f.status.toUpperCase().padEnd(10)}${k}  p50 ${f.baseline.p50} -> ${f.current.p50} (${pct}%)`);
+      const baseStr = formatByUnit(f.baseline.p50, f.baseline.unit);
+      const curStr = formatByUnit(f.current.p50, f.current.unit);
+      lines.push(`  ${f.status.toUpperCase().padEnd(10)}${k}  p50 ${baseStr} -> ${curStr} (${pct}%)`);
     }
   }
   lines.push(
@@ -200,6 +202,51 @@ function fmtMs(ms) {
 function fmtDeltaMs(ms) {
   const sign = ms > 0 ? '+' : '';
   return `${sign}${ms.toFixed(2)}ms`;
+}
+
+function fmtBytes(v) {
+  return `${(v / (1024 * 1024)).toFixed(2)}MB`;
+}
+
+function fmtDeltaBytes(v) {
+  const sign = v > 0 ? '+' : '';
+  return `${sign}${(v / (1024 * 1024)).toFixed(2)}MB`;
+}
+
+function fmtCount(v) {
+  return `${Math.round(v)}`;
+}
+
+function fmtDeltaCount(v) {
+  const sign = v > 0 ? '+' : '';
+  return `${sign}${Math.round(v)}`;
+}
+
+/**
+ * Renders a p50/p95/max value in its record's unit — MB-scaled for bytes,
+ * plain integer for count, and `fmtMs`'s legacy formatting for ms/undefined.
+ *
+ * @param {number} value
+ * @param {string|null|undefined} unit
+ * @returns {string}
+ */
+export function formatByUnit(value, unit) {
+  if (unit === 'bytes') return fmtBytes(value);
+  if (unit === 'count') return fmtCount(value);
+  return fmtMs(value);
+}
+
+/**
+ * Renders a delta value in its record's unit, with a leading +/- sign.
+ *
+ * @param {number} value
+ * @param {string|null|undefined} unit
+ * @returns {string}
+ */
+export function formatDeltaByUnit(value, unit) {
+  if (unit === 'bytes') return fmtDeltaBytes(value);
+  if (unit === 'count') return fmtDeltaCount(value);
+  return fmtDeltaMs(value);
 }
 
 function fmtPct(pct) {
@@ -229,9 +276,10 @@ export function formatMarkdownSummary(result, opts = {}) {
     if (f.status === 'new' || f.status === 'dropped') {
       lines.push(`| ${status} | ${k} | — | — | — | — |`);
     } else {
+      const deltaUnit = f.current.unit ?? f.baseline.unit;
       lines.push(
-        `| ${status} | ${k} | ${fmtMs(f.baseline.p50)} | ${fmtMs(f.current.p50)} | ` +
-        `${fmtDeltaMs(f.delta.p50Ms)} | ${fmtPct(f.delta.p50Pct)} |`
+        `| ${status} | ${k} | ${formatByUnit(f.baseline.p50, f.baseline.unit)} | ${formatByUnit(f.current.p50, f.current.unit)} | ` +
+        `${formatDeltaByUnit(f.delta.p50Ms, deltaUnit)} | ${fmtPct(f.delta.p50Pct)} |`
       );
     }
   }

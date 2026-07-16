@@ -26,6 +26,9 @@ import {
   resolveAbsoluteFloor,
   formatBaselineWrite,
   formatMarkdownSummary,
+  formatSummary,
+  formatByUnit,
+  formatDeltaByUnit,
   keyOf,
   main,
 } from './compare.mjs';
@@ -814,5 +817,270 @@ describe('compareRuns — mixed ms and bytes records under one tier gate indepen
     expect(bytesFinding.gates.absolute.floor).toBe(DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.bytes);
     expect(bytesFinding.gates.absolute.tripped).toBe(false);
     expect(bytesFinding.status).toBe('ok');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 9 — unit-aware CLI formatters (issue #44 AC 115-122).
+//
+// formatMarkdownSummary/formatSummary previously rendered every finding as if
+// it were milliseconds (formatMarkdownSummary hardcoded fmtMs/fmtDeltaMs; the
+// still-internal formatSummary printed raw unlabeled numbers). This slice
+// generalizes both via two new exported pure helpers, formatByUnit/
+// formatDeltaByUnit, and exports formatSummary for the first time. AC-115 is
+// a hard backward-compat lock: the ms rendering path must stay byte-identical
+// to the pre-Slice-9 output locked by T-44-073...077. None of the new exports
+// exist yet, so every test below fails at an import-time undefined-export
+// (formatSummary/formatByUnit/formatDeltaByUnit) or a real rendering mismatch.
+// ---------------------------------------------------------------------------
+
+/** Builds one baseline/current record pair + compareRuns() result of a single unit. */
+function makeSingleUnitResult({ unit, suite, scenario, baselineP50, currentP50, tier = 'micro' }) {
+  const baseline = makeRun(
+    [mkUnitRecord({ unit, suite, scenario, p50: baselineP50, p95: baselineP50, max: baselineP50 })],
+    { tier }
+  );
+  const current = makeRun(
+    [mkUnitRecord({ unit, suite, scenario, p50: currentP50, p95: currentP50, max: currentP50 })],
+    { tier }
+  );
+  return compareRuns(baseline, current, { tolerances: { [tier]: { relative: 0, absoluteFloorMs: 0 } } });
+}
+
+/** A single compareRuns() result mixing one ms, one bytes, and one count matched finding. */
+function makeMixedUnitResult() {
+  const baseline = makeRun(
+    [
+      mkUnitRecord({ unit: 'ms', suite: 'browser-smoke', scenario: 't_total', p50: 42, p95: 42, max: 42 }),
+      mkUnitRecord({ unit: 'bytes', suite: 'stress-spa', scenario: 'heap-growth', p50: 10_485_760, p95: 10_485_760, max: 10_485_760 }),
+      mkUnitRecord({ unit: 'count', suite: 'stress-rescan', scenario: 'span-count', p50: 10, p95: 10, max: 10 }),
+    ],
+    { tier: 'stress' }
+  );
+  const current = makeRun(
+    [
+      mkUnitRecord({ unit: 'ms', suite: 'browser-smoke', scenario: 't_total', p50: 62, p95: 62, max: 62 }),
+      mkUnitRecord({ unit: 'bytes', suite: 'stress-spa', scenario: 'heap-growth', p50: 15_728_640, p95: 15_728_640, max: 15_728_640 }),
+      mkUnitRecord({ unit: 'count', suite: 'stress-rescan', scenario: 'span-count', p50: 15, p95: 15, max: 15 }),
+    ],
+    { tier: 'stress' }
+  );
+  return compareRuns(baseline, current);
+}
+
+describe('formatMarkdownSummary — ms rendering backward-compat lock', () => {
+  it('T-44-116 the exact T-44-073...077 ms fixtures render byte-identical baseline/current/delta cells post-generalization', () => {
+    // Same fixtures as T-44-020 (100 -> 120): the pre-Slice-9 literal output
+    // (fmtMs/fmtDeltaMs) must survive the unit-aware refactor unchanged.
+    const baseline = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })]);
+    const current = makeRun([mkRecord({ p50: 120, p95: 150, max: 200 })]);
+    const result = compareRuns(baseline, current);
+
+    const md = formatMarkdownSummary(result);
+
+    expect(md).toContain('100.00ms');
+    expect(md).toContain('120.00ms');
+    expect(md).toContain('+20.00ms');
+    expect(md).toContain('+20.0%');
+
+    // The mixed-result fixture used throughout Slice 6's tests must also stay
+    // byte-identical for its ms cells.
+    const mixed = makeMixedResult();
+    const mixedMd = formatMarkdownSummary(mixed);
+    expect(mixedMd).toContain('50.00ms');
+    expect(mixedMd).toContain('100.00ms');
+    expect(mixedMd).toContain('120.00ms');
+  });
+});
+
+describe('formatMarkdownSummary — bytes rendering', () => {
+  it('T-44-117 a bytes finding (10MB -> 15MB) renders MB-scaled cells, never raw byte integers, never an ms suffix', () => {
+    const result = makeSingleUnitResult({
+      unit: 'bytes',
+      suite: 'stress-spa',
+      scenario: 'heap-growth',
+      baselineP50: 10_485_760, // exactly 10MB
+      currentP50: 15_728_640, // exactly 15MB
+    });
+
+    const md = formatMarkdownSummary(result);
+    const row = md.split('\n').find((l) => l.includes('heap-growth'));
+
+    expect(row).toBeDefined();
+    expect(row).toContain('10.00MB');
+    expect(row).toContain('15.00MB');
+    expect(row).toContain('+5.00MB');
+    expect(row).not.toContain('10485760');
+    expect(row).not.toContain('15728640');
+    expect(row).not.toMatch(/\dms\b/);
+  });
+});
+
+describe('formatMarkdownSummary — count rendering', () => {
+  it('T-44-118 a count finding (10 -> 15) renders plain integer cells with no ms suffix', () => {
+    const result = makeSingleUnitResult({
+      unit: 'count',
+      suite: 'stress-rescan',
+      scenario: 'span-count',
+      baselineP50: 10,
+      currentP50: 15,
+    });
+
+    const md = formatMarkdownSummary(result);
+    const row = md.split('\n').find((l) => l.includes('span-count'));
+
+    expect(row).toBeDefined();
+    expect(row).toContain('| 10 |');
+    expect(row).toContain('| 15 |');
+    expect(row).toContain('+5');
+    expect(row).not.toMatch(/\dms\b/);
+  });
+});
+
+describe('formatMarkdownSummary — mixed-unit table has no cross-contamination between rows', () => {
+  it('T-44-119 a table mixing ms/bytes/count findings renders each row in only its own record\'s unit', () => {
+    const result = makeMixedUnitResult();
+    const md = formatMarkdownSummary(result);
+    const lines = md.split('\n');
+
+    const msRow = lines.find((l) => l.includes('t_total'));
+    const bytesRow = lines.find((l) => l.includes('heap-growth'));
+    const countRow = lines.find((l) => l.includes('span-count'));
+
+    expect(msRow).toMatch(/42\.00ms/);
+    expect(msRow).toMatch(/62\.00ms/);
+    expect(msRow).not.toContain('MB');
+
+    expect(bytesRow).toContain('10.00MB');
+    expect(bytesRow).toContain('15.00MB');
+    expect(bytesRow).not.toMatch(/\dms\b/);
+
+    expect(countRow).toContain('| 10 |');
+    expect(countRow).toContain('| 15 |');
+    expect(countRow).not.toContain('MB');
+    expect(countRow).not.toMatch(/\dms\b/);
+  });
+});
+
+describe('formatSummary — now-exported, unit-aware per-line rendering', () => {
+  it('T-44-120 each line of the mixed-unit result carries the correct per-finding unit via the real formatByUnit output', () => {
+    const result = makeMixedUnitResult();
+    const text = formatSummary(result);
+    const lines = text.split('\n');
+
+    const msLine = lines.find((l) => l.includes('t_total'));
+    const bytesLine = lines.find((l) => l.includes('heap-growth'));
+    const countLine = lines.find((l) => l.includes('span-count'));
+
+    const msFinding = result.findings.find((f) => f.key.scenario === 't_total');
+    const bytesFinding = result.findings.find((f) => f.key.scenario === 'heap-growth');
+    const countFinding = result.findings.find((f) => f.key.scenario === 'span-count');
+
+    // Computed via the real, directly-imported formatByUnit — never a
+    // hand-rolled expected string — so this proves formatSummary actually
+    // dispatches through the same unit-aware helper the markdown renderer uses.
+    expect(msLine).toContain(formatByUnit(msFinding.baseline.p50, msFinding.baseline.unit));
+    expect(msLine).toContain(formatByUnit(msFinding.current.p50, msFinding.current.unit));
+
+    expect(bytesLine).toContain(formatByUnit(bytesFinding.baseline.p50, bytesFinding.baseline.unit));
+    expect(bytesLine).toContain(formatByUnit(bytesFinding.current.p50, bytesFinding.current.unit));
+    expect(bytesLine).not.toMatch(/\dms\b/);
+
+    expect(countLine).toContain(formatByUnit(countFinding.baseline.p50, countFinding.baseline.unit));
+    expect(countLine).toContain(formatByUnit(countFinding.current.p50, countFinding.current.unit));
+    expect(countLine).not.toContain('MB');
+  });
+});
+
+describe('formatMarkdownSummary/formatSummary — new/dropped placeholders stay unit-agnostic', () => {
+  it('T-44-121 a new bytes finding and a dropped count finding render placeholders in both formatters without throwing', () => {
+    const baseline = makeRun(
+      [mkUnitRecord({ unit: 'count', suite: 'stress-rescan', scenario: 'retired-count', p50: 5, p95: 5, max: 5 })],
+      { tier: 'stress' }
+    );
+    const current = makeRun(
+      [mkUnitRecord({ unit: 'bytes', suite: 'stress-spa', scenario: 'new-heap', p50: 1_048_576, p95: 1_048_576, max: 1_048_576 })],
+      { tier: 'stress' }
+    );
+    const result = compareRuns(baseline, current);
+
+    expect(result.findings).toHaveLength(2);
+    expect(result.findings.map((f) => f.status).sort()).toEqual(['dropped', 'new']);
+
+    expect(() => formatMarkdownSummary(result)).not.toThrow();
+    expect(() => formatSummary(result)).not.toThrow();
+
+    const md = formatMarkdownSummary(result);
+    const text = formatSummary(result);
+
+    expect(md).not.toMatch(/NaN/);
+    expect(md).not.toMatch(/undefined/);
+    expect(text).not.toMatch(/NaN/);
+    expect(text).not.toMatch(/undefined/);
+
+    const newRow = md.split('\n').find((l) => l.includes('new-heap'));
+    const droppedRow = md.split('\n').find((l) => l.includes('retired-count'));
+    expect(newRow).toContain('—');
+    expect(droppedRow).toContain('—');
+  });
+});
+
+describe('formatByUnit / formatDeltaByUnit — direct regression lock', () => {
+  it('T-44-122 exact expected strings for representative ms/bytes/count values', () => {
+    // ms — byte-identical to the legacy fmtMs/fmtDeltaMs behavior.
+    expect(formatByUnit(100, 'ms')).toBe('100.00ms');
+    expect(formatDeltaByUnit(20, 'ms')).toBe('+20.00ms');
+    expect(formatDeltaByUnit(-20, 'ms')).toBe('-20.00ms');
+
+    // A null/undefined unit must fall back to the ms path (legacy default).
+    expect(formatByUnit(50, undefined)).toBe('50.00ms');
+    expect(formatByUnit(50, null)).toBe('50.00ms');
+
+    // bytes — MB-scaled, two decimal places.
+    expect(formatByUnit(10_485_760, 'bytes')).toBe('10.00MB');
+    expect(formatDeltaByUnit(5_242_880, 'bytes')).toBe('+5.00MB');
+    expect(formatDeltaByUnit(-5_242_880, 'bytes')).toBe('-5.00MB');
+
+    // count — plain integers, no decimal places, no suffix.
+    expect(formatByUnit(42, 'count')).toBe('42');
+    expect(formatDeltaByUnit(3, 'count')).toBe('+3');
+    expect(formatDeltaByUnit(-3, 'count')).toBe('-3');
+  });
+});
+
+describe('main — end-to-end mixed-unit --markdown-out content', () => {
+  it('T-44-123 the appended markdown contains both an MB-styled bytes row and a normally-rendered ms row, with no NaN/undefined, and does not throw', async () => {
+    const current = makeRun(
+      [
+        mkUnitRecord({ unit: 'ms', suite: 'browser-smoke', scenario: 't_total', p50: 42, p95: 42, max: 42 }),
+        mkUnitRecord({ unit: 'bytes', suite: 'stress-spa', scenario: 'heap-growth', p50: 10_485_760, p95: 10_485_760, max: 10_485_760 }),
+      ],
+      { tier: 'stress' }
+    );
+    // Self-diff: baseline === current, so every finding is status ok — the
+    // point of this test is the rendering path, not the gating classification.
+    const currentJson = JSON.stringify(current);
+    const io = {
+      readFile: (p) => (p === 'baseline.json' ? currentJson : currentJson),
+      writeFile: vi.fn(),
+      appendFile: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    await expect(
+      main(
+        ['--baseline', 'baseline.json', '--current', 'current.json', '--markdown-out', 'summary.md'],
+        io
+      )
+    ).resolves.not.toThrow();
+
+    expect(io.appendFile).toHaveBeenCalledTimes(1);
+    const [, appendedData] = io.appendFile.mock.calls[0];
+
+    expect(appendedData).toContain('42.00ms');
+    expect(appendedData).toContain('10.00MB');
+    expect(appendedData).not.toMatch(/NaN/);
+    expect(appendedData).not.toMatch(/undefined/);
   });
 });

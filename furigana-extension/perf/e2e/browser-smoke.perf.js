@@ -52,6 +52,8 @@ import { fileURLToPath } from 'url';
 import { PERF_NAMES } from '../../content.timing.js';
 import { generateBrowserSmokeHTML } from '../fixtures/browser-smoke.js';
 import { readKuromojiDictFilesBase64, seedKuromojiDict } from './lib/dict-seed.js';
+import { assembleBrowserSmokeResult } from './lib/perf-results.js';
+import { writeResults, defaultIo } from '../lib/write-results.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // perf/e2e/ -> furigana-extension root (two levels up).
@@ -165,6 +167,12 @@ test.describe.serial('browser-smoke perf harness (issue #44 AC-54/56/57/58)', ()
       hasLearning: document.querySelectorAll('.anki-learning').length > 0,
       hasLearned: document.querySelectorAll('.anki-learned').length > 0,
     }));
+
+    await writeResults(assembleBrowserSmokeResult(ankikanMeasures), {
+      resultsDir: path.join(__dirname, '..', 'results'),
+      prefix: 'browser-smoke',
+      io: defaultIo,
+    });
   });
 
   test.afterAll(async () => {

@@ -42,6 +42,8 @@ import { PERF_NAMES } from '../../content.timing.js';
 import { stats } from '../lib/bench.js';
 import { generateBrowserSmokeHTML } from '../fixtures/browser-smoke.js';
 import { readKuromojiDictFilesBase64, seedKuromojiDict } from './lib/dict-seed.js';
+import { assembleStressResult } from './lib/perf-results.js';
+import { writeResults, defaultIo } from '../lib/write-results.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // perf/e2e/ -> furigana-extension root (two levels up).
@@ -213,6 +215,17 @@ async function sampleHeap(session, page) {
 let browserContext;
 let extensionId;
 
+// Module-scope accumulators for the Slice-9 stress result write-out — fed
+// additively by each scenario below (which keep their own local arrays and
+// assertions untouched) so the file-level afterAll can assemble one
+// {meta, records} result from all three scenarios' captures.
+/** @type {number[]} */
+let stressScrollDurations = [];
+/** @type {number[]} */
+let stressRescanDurations = [];
+/** @type {number[]} */
+let stressHeapSamples = [];
+
 test.beforeAll(async () => {
   test.setTimeout(90_000); // dict-seed alone can take ~15-20s (browser-smoke.perf.js note)
 
@@ -239,6 +252,14 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  await writeResults(
+    assembleStressResult({
+      scrollDurations: stressScrollDurations,
+      rescanDurations: stressRescanDurations,
+      heapSamples: stressHeapSamples,
+    }),
+    { resultsDir: path.join(__dirname, '..', 'results'), prefix: 'stress', io: defaultIo },
+  );
   await browserContext?.close();
 });
 
@@ -345,6 +366,8 @@ test.describe.serial('infinite-scroll churn stress harness (issue #44 AC-60/61/6
         // scanPage's AnkiConnect round trip resolves).
         await page.waitForTimeout(900);
       }
+
+      stressScrollDurations.push(...totalDurations);
     });
 
     test('T-44-067 6 spaced injections each yield a finite, non-negative ankikan:t_total duration (AC-61)', async () => {
@@ -438,6 +461,8 @@ test.describe.serial('idempotent re-scan stress harness (issue #44 AC-63/64)', (
     }
 
     await scanPopup.close();
+
+    stressRescanDurations.push(...manualScanDurations);
   });
 
   test.afterAll(async () => {
@@ -529,6 +554,8 @@ test.describe.serial('SPA re-navigation stress harness (issue #44 AC-65/66)', ()
       // Defensive buffer after the settle-poll before the next mutation.
       await page.waitForTimeout(150);
     }
+
+    stressHeapSamples.push(...heapSamples);
   });
 
   test.afterAll(async () => {

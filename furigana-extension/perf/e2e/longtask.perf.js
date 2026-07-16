@@ -45,6 +45,8 @@ import { installLongTaskObserver, readLongTasks } from './lib/longtask-observer.
 import { readKuromojiDictFilesBase64, seedKuromojiDict } from './lib/dict-seed.js';
 import { generateHTML, SIZES } from '../fixtures/generate.js';
 import { summarizeLongTasks } from '../lib/longtask.js';
+import { assembleLongtaskResult } from './lib/perf-results.js';
+import { writeResults, defaultIo } from '../lib/write-results.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // perf/e2e/ -> furigana-extension root (two levels up).
@@ -153,6 +155,12 @@ test.describe.serial('longtask observer perf harness (issue #44 AC-85/86/87)', (
       hasError: !!window.__ankikanLongTaskObserverError,
       isArray: Array.isArray(window.__ankikanLongTasks),
     }));
+
+    await writeResults(assembleLongtaskResult(summarizeLongTasks(capturedLongTasks)), {
+      resultsDir: path.join(__dirname, '..', 'results'),
+      prefix: 'longtask',
+      io: defaultIo,
+    });
   });
 
   test.afterAll(async () => {

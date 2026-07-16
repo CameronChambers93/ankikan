@@ -21,9 +21,18 @@ numbers can be baseline-diffed on the same footing as the Tier-1 micro numbers;
 the pure builders in `lib/build-records.js`
 (`buildPhaseRecords`/`buildHeapGrowthRecord`/`buildLongTaskRecords`) turn the
 captured browser/heap/long-task objects into `{meta, records}` the comparator
-consumes. What remains: wiring the live Playwright harnesses to actually **write**
-those records to `results/*.json`, `perf-scale` deck seeding (`seedAnkiPerfDeck`),
-and larger Tier-2 fixtures.
+consumes. The live Playwright harnesses now **write** those records out:
+`lib/write-results.js` (`assembleResults`/`writeResults`, injected-`io`) and
+`e2e/lib/perf-results.js` (`assembleBrowserSmokeResult`/`assembleLongtaskResult`/
+`assembleStressResult`) are wired into `e2e/browser-smoke.perf.js`,
+`e2e/longtask.perf.js`, and `e2e/stress.perf.js` respectively, so each run now
+produces `results/browser-smoke-latest.json`, `results/stress-latest.json`, and
+`results/longtask-latest.json` (closes AC-104) alongside their timestamped
+siblings. `compare.mjs`'s formatters (`formatSummary`/`formatMarkdownSummary`)
+are unit-aware end to end via the now-exported `formatByUnit`/`formatDeltaByUnit`
+helpers, rendering ms/bytes/count findings each in their own unit with no
+cross-contamination. What remains: `perf-scale` deck seeding
+(`seedAnkiPerfDeck`) and larger Tier-2 fixtures.
 
 ## Layout
 
@@ -31,9 +40,11 @@ and larger Tier-2 fixtures.
 perf/
   fixtures/   generate.js (deterministic JA pages), corpus.js, wide-vocab.js,
               pre-segment.js, build-fixtures.js, browser-smoke.js (Tier-2 smoke page)
-  lib/        prng, tokenizer (kuromoji, Node), dom (jsdom), bench (sampling harness)
+  lib/        prng, tokenizer (kuromoji, Node), dom (jsdom), bench (sampling harness),
+              build-records (pure record builders), write-results (assemble + injected-io write)
   micro/      tokenize / segment / scan / text-util benchmarks + run.js orchestrator
-  e2e/        Tier-2 Playwright specs (*.perf.js) + lib/ (kuromoji dict-seed helper)
+  e2e/        Tier-2/3 Playwright specs (*.perf.js) + lib/ (kuromoji dict-seed helper,
+              longtask-observer, perf-results per-harness assembly wrappers)
   playwright.perf.config.js   Tier-2 Playwright config (perf/e2e, *.perf.js, headed)
   setup-anki-perf.js   deck-planning module for a perf-scale Anki deck (pure
                         computeDeckPlan + a thin, dependency-injected live-Anki shell)
