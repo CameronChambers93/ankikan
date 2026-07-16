@@ -24,7 +24,28 @@ export const DEFAULT_TOLERANCES = {
   stress: { relative: 0.35, absoluteFloorMs: 2 },
 };
 
+export const DEFAULT_ABSOLUTE_FLOORS_BY_UNIT = {
+  ms: 2,
+  bytes: 5 * 1024 * 1024,
+  count: 1,
+};
+
 const FALLBACK_TOLERANCE = { relative: 0.20, absoluteFloorMs: 2 };
+
+/**
+ * Resolves the absolute-gate floor for a joined finding, keyed by the
+ * record's own `unit` rather than always using the tier's ms floor.
+ *
+ * @param {{absoluteFloorMs: number}} tol
+ * @param {string|null|undefined} unit
+ * @param {object} [unitFloors] - Caller overrides, merged over the defaults.
+ * @returns {number}
+ */
+export function resolveAbsoluteFloor(tol, unit, unitFloors = {}) {
+  if (unit === 'ms' || unit == null) return tol.absoluteFloorMs;
+  const floors = { ...DEFAULT_ABSOLUTE_FLOORS_BY_UNIT, ...unitFloors };
+  return floors[unit] ?? tol.absoluteFloorMs;
+}
 
 /**
  * Join key for a record. Uses a null-sentinel (' ') distinct from any real
@@ -38,7 +59,7 @@ export function keyOf(r) {
 }
 
 function pick(r) {
-  return { p50: r.p50, p95: r.p95, max: r.max };
+  return { p50: r.p50, p95: r.p95, max: r.max, unit: r.unit ?? 'ms' };
 }
 
 /**
@@ -46,7 +67,7 @@ function pick(r) {
  *
  * @param {{meta: object, records: object[]}} baseline
  * @param {{meta: object, records: object[]}} current
- * @param {{tolerances?: object}} [opts]
+ * @param {{tolerances?: object, unitFloors?: object}} [opts]
  * @returns {{tier: string, tolerance: object, findings: object[], summary: object}}
  */
 export function compareRuns(baseline, current, opts = {}) {
@@ -59,6 +80,7 @@ export function compareRuns(baseline, current, opts = {}) {
     }
   }
   const tol = tolerances[tier] ?? FALLBACK_TOLERANCE;
+  const unitFloors = opts.unitFloors ?? {};
 
   const baseMap = new Map(baseline.records.map((r) => [keyOf(r), r]));
   const curMap = new Map(current.records.map((r) => [keyOf(r), r]));
@@ -75,7 +97,9 @@ export function compareRuns(baseline, current, opts = {}) {
       const deltaMs = cur.p50 - base.p50;
       const deltaPct = base.p50 === 0 ? (deltaMs > 0 ? Infinity : 0) : deltaMs / base.p50;
       const relTripped = Math.abs(deltaPct) > tol.relative;
-      const absTripped = Math.abs(deltaMs) > tol.absoluteFloorMs;
+      const unit = cur.unit ?? base.unit ?? 'ms';
+      const floor = resolveAbsoluteFloor(tol, unit, unitFloors);
+      const absTripped = Math.abs(deltaMs) > floor;
       const status = relTripped && absTripped ? (deltaMs > 0 ? 'regression' : 'improvement') : 'ok';
 
       findings.push({
@@ -83,7 +107,7 @@ export function compareRuns(baseline, current, opts = {}) {
         key: { suite: cur.suite, scenario: cur.scenario, size: cur.size, variant: cur.variant },
         gates: {
           relative: { tripped: relTripped, tolerance: tol.relative },
-          absolute: { tripped: absTripped, floorMs: tol.absoluteFloorMs },
+          absolute: { tripped: absTripped, floorMs: floor, floor, unit },
         },
         baseline: pick(base),
         current: pick(cur),

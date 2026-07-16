@@ -14,9 +14,16 @@ before `document_idle` also captures the synchronous main-thread blocking from
 the local-mode kuromoji tokenize + `segmentAndWrap` pass on a dense-L page, and
 the pure `lib/longtask.js` `summarizeLongTasks` aggregator reports its
 total/longest durations (closes out the capability previously tracked as
-"AC-67"). The `compare.mjs` baseline-diff of long-task/heap numbers,
-`perf-scale` deck seeding (`seedAnkiPerfDeck`), and larger Tier-2 fixtures are
-still to come.
+"AC-67"). `compare.mjs` is now **unit-aware** — its two-gate rule resolves the
+absolute floor per metric unit (`ms`≈2ms, `bytes`≈5MB, `count`≈1) instead of a
+single ms floor, so browser (per-phase ms), heap (bytes), and long-task (ms)
+numbers can be baseline-diffed on the same footing as the Tier-1 micro numbers;
+the pure builders in `lib/build-records.js`
+(`buildPhaseRecords`/`buildHeapGrowthRecord`/`buildLongTaskRecords`) turn the
+captured browser/heap/long-task objects into `{meta, records}` the comparator
+consumes. What remains: wiring the live Playwright harnesses to actually **write**
+those records to `results/*.json`, `perf-scale` deck seeding (`seedAnkiPerfDeck`),
+and larger Tier-2 fixtures.
 
 ## Layout
 

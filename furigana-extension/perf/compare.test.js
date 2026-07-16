@@ -22,6 +22,8 @@ import { record } from './lib/bench.js';
 import {
   compareRuns,
   DEFAULT_TOLERANCES,
+  DEFAULT_ABSOLUTE_FLOORS_BY_UNIT,
+  resolveAbsoluteFloor,
   formatBaselineWrite,
   formatMarkdownSummary,
   keyOf,
@@ -595,5 +597,222 @@ describe('main — combined --seed-on-missing and --markdown-out', () => {
     const [, appendedData] = io.appendFile.mock.calls[0];
     expect(appendedData).toMatch(/seeded from this run/i);
     expect(appendedData).toMatch(/regression=0/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 8 — unit-aware gating (issue #44 AC 91-97).
+//
+// compareRuns()'s two-gate rule always used tol.absoluteFloorMs (an ms floor)
+// as the absolute-gate value, even for non-ms records. This slice generalizes
+// the absolute-floor lookup by the joined record's own `unit` field via a new
+// DEFAULT_ABSOLUTE_FLOORS_BY_UNIT table and resolveAbsoluteFloor() helper,
+// while keeping DEFAULT_TOLERANCES and the ms code path byte-identical to
+// Slice 2 (T-44-019...036). None of this exists yet in compare.mjs, so every
+// test below fails at either an import-time undefined-export or a real
+// assertion mismatch (still falling back to the ms floor for non-ms units).
+// ---------------------------------------------------------------------------
+
+/** Builds one record via the real `record()` helper with an explicit `unit`, for bytes/count fixtures. */
+function mkUnitRecord({ suite = 'stress-spa', scenario = 'heap-growth', size = null, variant = null, unit, p50, p95, max, mean, n = 8 }) {
+  return record({
+    suite,
+    scenario,
+    size,
+    variant,
+    unit,
+    stats: { p50, p95: p95 ?? p50, max: max ?? p50, mean: mean ?? p50, n },
+  });
+}
+
+describe('compareRuns — unit-aware gating regression lock (ms path unchanged)', () => {
+  it('T-44-094 the ms fixture from T-44-020 still reports identical status/gates/floorMs after the unit-aware refactor', () => {
+    // Same 100 -> 120 p50 fixture as the pre-refactor T-44-020: both gates
+    // trip under the default ms floor, and gates.absolute.floorMs must still
+    // read exactly tol.absoluteFloorMs (2) — the byte-identical legacy path.
+    const baseline = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })]);
+    const current = makeRun([mkRecord({ p50: 120, p95: 150, max: 200 })]);
+
+    const result = compareRuns(baseline, current);
+
+    expect(result.findings[0].status).toBe('regression');
+    expect(result.findings[0].gates.relative.tripped).toBe(true);
+    expect(result.findings[0].gates.absolute.tripped).toBe(true);
+    expect(result.findings[0].gates.absolute.floorMs).toBe(DEFAULT_TOLERANCES.micro.absoluteFloorMs);
+  });
+});
+
+describe('DEFAULT_TOLERANCES — shape unchanged by the unit-floor refactor', () => {
+  it('T-44-095 DEFAULT_TOLERANCES.micro/.e2e/.stress each equal exactly {relative, absoluteFloorMs} with no extra keys', () => {
+    expect(DEFAULT_TOLERANCES.micro).toEqual({ relative: 0.15, absoluteFloorMs: 2 });
+    expect(DEFAULT_TOLERANCES.e2e).toEqual({ relative: 0.35, absoluteFloorMs: 2 });
+    expect(DEFAULT_TOLERANCES.stress).toEqual({ relative: 0.35, absoluteFloorMs: 2 });
+
+    // The additive unit-floor design must live in a separate table, never
+    // merged into (or replacing) this tier-tolerance shape.
+    expect(Object.keys(DEFAULT_TOLERANCES.micro).sort()).toEqual(['absoluteFloorMs', 'relative']);
+  });
+});
+
+describe('compareRuns — bytes-unit relative gate alone does not trip a regression', () => {
+  it('T-44-096 a ~4MB/40% bytes delta trips the relative gate but stays under the 5MB byte floor: status ok', () => {
+    // deltaBytes = 4,000,000 < DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.bytes (5,242,880),
+    // deltaPct = 0.4 > stress tier's 0.35 relative tolerance — relative trips,
+    // absolute does not, so the AND-gate keeps status at ok (mirrors the ms
+    // near-zero-duration noise-suppression case, but at byte scale).
+    const baseline = makeRun(
+      [mkUnitRecord({ unit: 'bytes', p50: 10_000_000, p95: 10_000_000, max: 10_000_000 })],
+      { tier: 'stress' }
+    );
+    const current = makeRun(
+      [mkUnitRecord({ unit: 'bytes', p50: 14_000_000, p95: 14_000_000, max: 14_000_000 })],
+      { tier: 'stress' }
+    );
+
+    const result = compareRuns(baseline, current);
+
+    expect(result.findings[0].gates.relative.tripped).toBe(true);
+    expect(result.findings[0].gates.absolute.tripped).toBe(false);
+    expect(result.findings[0].status).toBe('ok');
+  });
+});
+
+describe('compareRuns — bytes-unit both gates trip a real regression/improvement', () => {
+  it('T-44-097 a 10MB/100% growth trips both bytes gates: status regression', () => {
+    const baseline = makeRun(
+      [mkUnitRecord({ unit: 'bytes', p50: 10_000_000, p95: 10_000_000, max: 10_000_000 })],
+      { tier: 'stress' }
+    );
+    const current = makeRun(
+      [mkUnitRecord({ unit: 'bytes', p50: 20_000_000, p95: 20_000_000, max: 20_000_000 })],
+      { tier: 'stress' }
+    );
+
+    const result = compareRuns(baseline, current);
+
+    expect(result.findings[0].gates.relative.tripped).toBe(true);
+    expect(result.findings[0].gates.absolute.tripped).toBe(true);
+    expect(result.findings[0].gates.absolute.floor).toBe(DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.bytes);
+    expect(result.findings[0].gates.absolute.unit).toBe('bytes');
+    expect(result.findings[0].status).toBe('regression');
+  });
+
+  it('T-44-097 a 12MB/60% shrink trips both bytes gates in the negative direction: status improvement', () => {
+    const baseline = makeRun(
+      [mkUnitRecord({ unit: 'bytes', p50: 20_000_000, p95: 20_000_000, max: 20_000_000 })],
+      { tier: 'stress' }
+    );
+    const current = makeRun(
+      [mkUnitRecord({ unit: 'bytes', p50: 8_000_000, p95: 8_000_000, max: 8_000_000 })],
+      { tier: 'stress' }
+    );
+
+    const result = compareRuns(baseline, current);
+
+    expect(result.findings[0].gates.relative.tripped).toBe(true);
+    expect(result.findings[0].gates.absolute.tripped).toBe(true);
+    expect(result.findings[0].gates.absolute.floor).toBe(DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.bytes);
+    expect(result.findings[0].gates.absolute.unit).toBe('bytes');
+    expect(result.findings[0].status).toBe('improvement');
+  });
+});
+
+describe('compareRuns — count-unit records use DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.count, not the ms fallback', () => {
+  it('T-44-098 a 1.6-unit count delta trips the count floor (1) though it would not trip a wrongly-applied ms floor (2)', () => {
+    // deltaMs (here, a count delta) = 1.6: under the ms fallback floor of 2 this
+    // would NOT trip absolute (proving a bug if the implementation silently
+    // fell back to the ms floor for an unrecognized unit); under the real
+    // DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.count (1) it DOES trip.
+    expect(DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.count).toBe(1);
+
+    const baseline = makeRun([mkUnitRecord({ unit: 'count', p50: 10, p95: 10, max: 10 })]);
+    const current = makeRun([mkUnitRecord({ unit: 'count', p50: 11.6, p95: 11.6, max: 11.6 })]);
+
+    const result = compareRuns(baseline, current);
+
+    expect(result.findings[0].gates.relative.tripped).toBe(true);
+    expect(result.findings[0].gates.absolute.tripped).toBe(true);
+    expect(result.findings[0].gates.absolute.unit).toBe('count');
+    expect(result.findings[0].status).toBe('regression');
+  });
+});
+
+describe('resolveAbsoluteFloor — direct unit tests', () => {
+  it('T-44-098 resolveAbsoluteFloor returns tol.absoluteFloorMs for unit "ms" or a null/undefined unit', () => {
+    const tol = { relative: 0.15, absoluteFloorMs: 2 };
+
+    expect(resolveAbsoluteFloor(tol, 'ms')).toBe(2);
+    expect(resolveAbsoluteFloor(tol, null)).toBe(2);
+    expect(resolveAbsoluteFloor(tol, undefined)).toBe(2);
+  });
+
+  it('T-44-098 resolveAbsoluteFloor returns DEFAULT_ABSOLUTE_FLOORS_BY_UNIT[unit] for a recognized non-ms unit', () => {
+    const tol = { relative: 0.15, absoluteFloorMs: 2 };
+
+    expect(resolveAbsoluteFloor(tol, 'bytes')).toBe(DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.bytes);
+    expect(resolveAbsoluteFloor(tol, 'count')).toBe(DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.count);
+  });
+});
+
+describe('compareRuns — opts.unitFloors overrides the default bytes floor', () => {
+  it('T-44-099 a ~2MB/40% bytes delta stays ok under the 5MB default but regresses under a 1MB opts.unitFloors override', () => {
+    const baseline = makeRun(
+      [mkUnitRecord({ unit: 'bytes', p50: 5_000_000, p95: 5_000_000, max: 5_000_000 })],
+      { tier: 'stress' }
+    );
+    const current = makeRun(
+      [mkUnitRecord({ unit: 'bytes', p50: 7_000_000, p95: 7_000_000, max: 7_000_000 })],
+      { tier: 'stress' }
+    );
+
+    const defaultResult = compareRuns(baseline, current);
+    expect(defaultResult.findings[0].gates.absolute.tripped).toBe(false);
+    expect(defaultResult.findings[0].status).toBe('ok');
+
+    const overriddenResult = compareRuns(baseline, current, {
+      unitFloors: { bytes: 1 * 1024 * 1024 },
+    });
+    expect(overriddenResult.findings[0].gates.absolute.tripped).toBe(true);
+    expect(overriddenResult.findings[0].status).toBe('regression');
+  });
+});
+
+describe('compareRuns — mixed ms and bytes records under one tier gate independently', () => {
+  it('T-44-100 a ms record and a bytes record in the same run are each gated by their own unit with no cross-contamination', () => {
+    // ms record: 100 -> 145 (45% relative / 45ms absolute delta — clears the
+    // stress tier's 35% relative tolerance and the 2ms floor; this run is
+    // tier:'stress' throughout, not the default micro tier T-44-020 uses, so
+    // a 20% delta would NOT regress here — 145 is the genuine stress-tier trip).
+    // bytes record: 10,000,000 -> 10,300,000 (3% / 300,000 bytes — well under
+    // both the stress tier's 35% relative tolerance and the 5MB byte floor).
+    const baseline = makeRun(
+      [
+        mkRecord({ suite: 'browser-smoke', scenario: 't_total', p50: 100, p95: 150, max: 200 }),
+        mkUnitRecord({ unit: 'bytes', scenario: 'heap-growth', p50: 10_000_000, p95: 10_000_000, max: 10_000_000 }),
+      ],
+      { tier: 'stress' }
+    );
+    const current = makeRun(
+      [
+        mkRecord({ suite: 'browser-smoke', scenario: 't_total', p50: 145, p95: 150, max: 200 }),
+        mkUnitRecord({ unit: 'bytes', scenario: 'heap-growth', p50: 10_300_000, p95: 10_300_000, max: 10_300_000 }),
+      ],
+      { tier: 'stress' }
+    );
+
+    const result = compareRuns(baseline, current);
+
+    const msFinding = result.findings.find((f) => f.key.scenario === 't_total');
+    const bytesFinding = result.findings.find((f) => f.key.scenario === 'heap-growth');
+
+    expect(msFinding.gates.absolute.unit).toBe('ms');
+    expect(msFinding.gates.absolute.floor).toBe(DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.ms);
+    expect(msFinding.gates.absolute.tripped).toBe(true);
+    expect(msFinding.status).toBe('regression');
+
+    expect(bytesFinding.gates.absolute.unit).toBe('bytes');
+    expect(bytesFinding.gates.absolute.floor).toBe(DEFAULT_ABSOLUTE_FLOORS_BY_UNIT.bytes);
+    expect(bytesFinding.gates.absolute.tripped).toBe(false);
+    expect(bytesFinding.status).toBe('ok');
   });
 });
