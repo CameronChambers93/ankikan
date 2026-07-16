@@ -33,6 +33,19 @@ export function assembleLongtaskResult(summary, opts = {}) {
 }
 
 /**
+ * @param {{name: string, duration: number}[]} measures
+ * @param {object} [opts]
+ * @returns {{meta: object, records: object[]}}
+ */
+export function assembleWideScanResult(measures, opts = {}) {
+  return assembleResults(
+    'e2e',
+    buildPhaseRecords(measures, { suite: 'wide-scan', size: 'L', variant: 'wide' }),
+    opts
+  );
+}
+
+/**
  * @param {{scrollDurations: number[], rescanDurations: number[], heapSamples: number[]}} captures
  * @param {object} [opts]
  * @returns {{meta: object, records: object[]}}

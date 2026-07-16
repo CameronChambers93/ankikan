@@ -39,8 +39,16 @@ reseeding), turning what was ~3 round trips per note into a handful of batched
 calls, and a new live-only proof spec (`e2e/seed-anki-perf.perf.js`) verifies the
 seeded note count, per-card type/queue, duplicate persistence, and idempotency
 against real Anki at SIZES.L (closes the previously-deferred live half of AC-17).
-What remains: larger Tier-2 dense/sparse/wide fixtures and a Tier-2 wide-page
-*scan* scenario that drives `scanPage` against the seeded `AnkiKan-Perf` deck.
+**Tier-2 large wide/pre-segmented fixtures and the wide-page `scanPage` scenario
+have landed** (`e2e/wide-scan.perf.js`, `e2e/lib/perf-results.js`'s
+`assembleWideScanResult`): a key finding from this slice is that the scenario
+needs **no kuromoji dict-seed** — the extension's default (unseeded) storage
+resolves `lemmaMode` to `'off'`, so `segmentAndWrap` never runs client-side and
+`scanPage` is exercised directly against a Node-built pre-segmented wide
+fixture, at full Tier-2 scale (8,445 spans / 2,854 distinct lookup words for
+SIZES.L), against the live, self-seeded `AnkiKan-Perf` deck. What remains:
+`docs/performance-testing.md`, CI phase 2, and CI-markdown mixed-unit
+rendering.
 
 ## Layout
 

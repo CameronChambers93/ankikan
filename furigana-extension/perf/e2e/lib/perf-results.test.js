@@ -1,5 +1,6 @@
 /**
- * Unit tests for perf/e2e/lib/perf-results.js (issue #44 AC 110-113, Slice 9).
+ * Unit tests for perf/e2e/lib/perf-results.js (issue #44 AC 110-113, Slice 9;
+ * AC-22, Slice 11).
  *
  * perf-results.js is the per-harness pure-assembly-wrapper half of Slice 9:
  * `assembleBrowserSmokeResult`/`assembleLongtaskResult`/`assembleStressResult`
@@ -11,9 +12,17 @@
  * builder/comparator functions the wrappers themselves must call — nothing is
  * hand-rolled or reimplemented here.
  *
- * RED-phase note: perf/e2e/lib/perf-results.js does not exist yet, so every
- * import below fails at module-resolution time until the developer
- * implements it. That is the correct starting state for this slice.
+ * Slice 11 adds `assembleWideScanResult`, the wide-scan.perf.js harness's
+ * wrapper — composing `buildPhaseRecords(measures, {suite:'wide-scan',
+ * size:'L', variant:'wide'})`. Unlike the other harnesses, the wide-scan
+ * scenario runs with `lemmaMode:'off'` (no dict-seed), so `segmentAndWrap`
+ * never fires client-side and `t_segment` is deliberately absent from its
+ * 4-element measures array (vs. the usual 5).
+ *
+ * RED-phase note: assembleWideScanResult does not exist yet in
+ * perf/e2e/lib/perf-results.js, so the import below fails at
+ * module-resolution time until the developer implements it. That is the
+ * correct starting state for this slice.
  */
 import { describe, it, expect } from 'vitest';
 
@@ -21,6 +30,7 @@ import {
   assembleBrowserSmokeResult,
   assembleLongtaskResult,
   assembleStressResult,
+  assembleWideScanResult,
 } from './perf-results.js';
 import { buildPhaseRecords, buildHeapGrowthRecord, buildLongTaskRecords } from '../../lib/build-records.js';
 import { record, stats } from '../../lib/bench.js';
@@ -42,6 +52,22 @@ function makeBrowserSmokeMeasures() {
     { name: PERF_NAMES.ANKI_FINDCARDS, duration: 8.6, startTime: 15.5 },
     { name: PERF_NAMES.ANKI_CARDSINFO, duration: 6.2, startTime: 24.1 },
     { name: PERF_NAMES.TOTAL, duration: 31.9, startTime: 0 },
+  ];
+}
+
+/**
+ * A literal 4-entry ankikanMeasures array shaped exactly like
+ * wide-scan.perf.js's real `page.evaluate()` capture: `lemmaMode` resolves to
+ * 'off' (no dict-seed), so `segmentAndWrap` never runs and PERF_NAMES.SEGMENT
+ * is deliberately absent — only the two AnkiConnect round trips, the DOM
+ * injection pass, and the outer total.
+ */
+function makeWideScanMeasures() {
+  return [
+    { name: PERF_NAMES.ANKI_FINDCARDS, duration: 420.7, startTime: 0 },
+    { name: PERF_NAMES.ANKI_CARDSINFO, duration: 610.2, startTime: 420.7 },
+    { name: PERF_NAMES.DOM_INJECT, duration: 88.4, startTime: 1030.9 },
+    { name: PERF_NAMES.TOTAL, duration: 1119.3, startTime: 0 },
   ];
 }
 
@@ -146,5 +172,25 @@ describe('assembled results round-trip through compareRuns self-diff', () => {
         expect(finding.status).toBe('ok');
       }
     }
+  });
+});
+
+describe('assembleWideScanResult — composition of buildPhaseRecords for the wide-scan harness (t_segment absent)', () => {
+  it('T-44-143 records deep-equal buildPhaseRecords(measures, {suite:"wide-scan", size:"L", variant:"wide"}), meta.tier is e2e, and exactly 4 records are produced', () => {
+    const measures = makeWideScanMeasures();
+
+    const result = assembleWideScanResult(measures, { now: fixedNow });
+
+    expect(result.records).toEqual(
+      buildPhaseRecords(measures, { suite: 'wide-scan', size: 'L', variant: 'wide' })
+    );
+    expect(result.meta.tier).toBe('e2e');
+    expect(result.records).toHaveLength(4);
+
+    // The absence is as load-bearing as the presence: wide-scan.perf.js's
+    // default (unseeded) storage resolves lemmaMode to 'off', so
+    // segmentAndWrap never runs client-side and never emits t_segment.
+    const scenarios = result.records.map((r) => r.scenario);
+    expect(scenarios).not.toContain('t_segment');
   });
 });

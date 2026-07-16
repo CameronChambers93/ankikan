@@ -13,7 +13,9 @@
 import { describe, it, expect } from 'vitest';
 import { computeDeckPlan, seedAnkiPerfDeck } from './setup-anki-perf.js';
 import { KANJI_NOUNS, KANJI_SINGLE, VERBS, ADJECTIVES } from './fixtures/corpus.js';
-import { wideVocabulary } from './fixtures/wide-vocab.js';
+import { wideVocabulary, wideVocabSize } from './fixtures/wide-vocab.js';
+import { generateHTML, SIZES } from './fixtures/generate.js';
+import { domFromHTML } from './lib/dom.js';
 
 // Real Japanese vocabulary drawn from the existing fixture pools, not opaque
 // placeholder strings — 50+15+20+18 = 103 distinct words, sliced to exactly 100.
@@ -305,5 +307,66 @@ describe('seedAnkiPerfDeck — reset before seeding', () => {
 
     expect(calls.some((c) => c.action === 'findNotes')).toBe(false);
     expect(calls.some((c) => c.action === 'deleteNotes')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 11 — pre-proving the live wide-scan deck-overlap guarantees
+// (T-44-139/140, AC 18/19)
+//
+// wide-scan.perf.js (a later live-Anki harness) seeds AnkiKan-Perf from
+// computeDeckPlan(wideVocabulary(wideVocabSize(SIZES.L))) and serves a raw
+// wide-L page built from the SAME seeded wideVocabulary sequence
+// (generate.js's wide branch draws from the identical cursor). These tests
+// prove, entirely in Vitest before any live Anki run, that the page's
+// distinct vocabulary strictly exceeds the deck's matched-expression set
+// (guaranteeing anki-unknown fires) and that every duplicate-note expression
+// in the deck plan is a member of the page's vocabulary (guaranteeing
+// anki-duplicate fires) — decoupling the live test's correctness from flaky
+// in-browser discovery.
+// ---------------------------------------------------------------------------
+
+describe('computeDeckPlan vs wide-L page vocabulary — anki-unknown pre-proof', () => {
+  it('T-44-139 the wide-L page\'s distinct span-text count strictly exceeds the deck plan\'s distinct expression count', () => {
+    const plan = computeDeckPlan(wideVocabulary(wideVocabSize(SIZES.L)));
+    const distinctPlanExpressionCount = new Set(plan.map((p) => p.expression)).size;
+
+    const pageHTML = generateHTML(SIZES.L, { variant: 'wide' });
+    const { body } = domFromHTML(pageHTML);
+    const distinctPageSpanTextCount = new Set(
+      Array.from(body.querySelectorAll('span')).map((s) => s.textContent)
+    ).size;
+
+    // If this margin ever shrinks to zero, the live wide-scan harness could
+    // no longer guarantee an anki-unknown span appears on the page.
+    expect(distinctPageSpanTextCount).toBeGreaterThan(distinctPlanExpressionCount);
+  });
+});
+
+describe('computeDeckPlan vs wide-L page vocabulary — anki-duplicate pre-proof', () => {
+  it('T-44-140 every expression that appears twice in the deck plan is a member of the wide-L page\'s distinct span-text set', () => {
+    const plan = computeDeckPlan(wideVocabulary(wideVocabSize(SIZES.L)));
+
+    // Same idiom seed-anki-perf.perf.js's T-44-134 uses to identify a
+    // duplicate-note pair, generalized to every duplicated expression in the
+    // plan rather than a single hardcoded one.
+    const distinctExpressions = new Set(plan.map((p) => p.expression));
+    const duplicateExpressions = Array.from(distinctExpressions).filter(
+      (expression) => plan.filter((p) => p.expression === expression).length === 2
+    );
+
+    // Guard against a vacuous pass: computeDeckPlan's default duplicateRatio
+    // must actually have produced at least one duplicate for this vocab size.
+    expect(duplicateExpressions.length).toBeGreaterThan(0);
+
+    const pageHTML = generateHTML(SIZES.L, { variant: 'wide' });
+    const { body } = domFromHTML(pageHTML);
+    const pageSpanTextSet = new Set(
+      Array.from(body.querySelectorAll('span')).map((s) => s.textContent)
+    );
+
+    for (const expression of duplicateExpressions) {
+      expect(pageSpanTextSet.has(expression)).toBe(true);
+    }
   });
 });
