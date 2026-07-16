@@ -31,8 +31,16 @@ produces `results/browser-smoke-latest.json`, `results/stress-latest.json`, and
 siblings. `compare.mjs`'s formatters (`formatSummary`/`formatMarkdownSummary`)
 are unit-aware end to end via the now-exported `formatByUnit`/`formatDeltaByUnit`
 helpers, rendering ms/bytes/count findings each in their own unit with no
-cross-contamination. What remains: `perf-scale` deck seeding
-(`seedAnkiPerfDeck`) and larger Tier-2 fixtures.
+cross-contamination. **Perf-scale live-Anki deck seeding** (`seedAnkiPerfDeck`)
+now runs against a real AnkiConnect instance at Tier-2 scale: its I/O shell is
+**batched** (`addNotes` → `notesInfo` → `multi`-wrapped `setSpecificValueOfCard`)
+and **reset-then-seed idempotent** (it clears the `AnkiKan-Perf` deck before
+reseeding), turning what was ~3 round trips per note into a handful of batched
+calls, and a new live-only proof spec (`e2e/seed-anki-perf.perf.js`) verifies the
+seeded note count, per-card type/queue, duplicate persistence, and idempotency
+against real Anki at SIZES.L (closes the previously-deferred live half of AC-17).
+What remains: larger Tier-2 dense/sparse/wide fixtures and a Tier-2 wide-page
+*scan* scenario that drives `scanPage` against the seeded `AnkiKan-Perf` deck.
 
 ## Layout
 
@@ -46,8 +54,8 @@ perf/
   e2e/        Tier-2/3 Playwright specs (*.perf.js) + lib/ (kuromoji dict-seed helper,
               longtask-observer, perf-results per-harness assembly wrappers)
   playwright.perf.config.js   Tier-2 Playwright config (perf/e2e, *.perf.js, headed)
-  setup-anki-perf.js   deck-planning module for a perf-scale Anki deck (pure
-                        computeDeckPlan + a thin, dependency-injected live-Anki shell)
+  setup-anki-perf.js   perf-scale Anki deck seeder (pure computeDeckPlan + a
+                        batched, reset-then-seed, dependency-injected live-Anki shell)
   results/    JSON output (git-ignored); micro-latest.json is the newest run
 ```
 
@@ -59,7 +67,7 @@ PERF_SIZES=all pnpm run perf:micro       # add XL (heavy)
 PERF_SIZES=S,M PERF_SAMPLES=12 pnpm run perf:micro
 pnpm run perf:fixtures                   # write HTML pages to fixtures/pages/ (Tier-2)
 PERF_PRESEGMENT=1 pnpm run perf:fixtures # also write .presegmented.html (builds real kuromoji, slower)
-node perf/setup-anki-perf.js             # seed a perf-scale deck (requires Anki + AnkiConnect running)
+node perf/setup-anki-perf.js             # manually seed the full-XL perf deck (~11,550 notes; requires Anki + AnkiConnect)
 pnpm run build && pnpm run perf:e2e      # Tier-2 Playwright (requires live Anki + AnkiKan-E2E deck)
 ```
 
@@ -122,3 +130,10 @@ from the current run instead of erroring when it's missing) and
 - Fixtures are fully deterministic (fixed seed) — do not swap in `Math.random`.
 - `results/` and `fixtures/pages/` are git-ignored; only the committed
   `baseline.local.json` is tracked (`baseline.ci.json` is CI-only and git-ignored).
+- `seedAnkiPerfDeck` is **reset-then-seed**: each call clears the `AnkiKan-Perf`
+  deck's existing notes before reseeding, so repeated runs don't accumulate. It
+  only ever touches `AnkiKan-Perf` (never the functional `AnkiKan-E2E` deck).
+- The automated live proof (`e2e/seed-anki-perf.perf.js`) seeds at **SIZES.L**
+  (~2,310 notes) so it stays fast enough to run routinely. The full **XL** target
+  (~11,550 notes) is not automated — run it on demand via
+  `node perf/setup-anki-perf.js`, which is the occasional full-scale seed path.

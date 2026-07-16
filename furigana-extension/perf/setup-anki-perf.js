@@ -58,37 +58,91 @@ async function ankiRequest(action, params = {}) {
   return json.result;
 }
 
+function chunk(arr, size) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
 /**
  * Seeds AnkiConnect with the notes described by `plan`. Thin I/O shell over
  * computeDeckPlan's output; `anki` is injectable for testing, defaulting to a
- * local fetch-based helper.
+ * local fetch-based helper. Batches addNotes/notesInfo/multi calls (in
+ * chunks of `batchSize`/`setBatchSize`) rather than one round trip per note,
+ * and optionally resets the deck (deletes any pre-existing notes) before
+ * seeding so repeat runs are idempotent.
  *
  * @param {ReturnType<typeof computeDeckPlan>} plan
  * @param {object} [opts]
  * @param {(action: string, params?: object) => Promise<any>} [opts.anki]
+ * @param {number} [opts.batchSize]
+ * @param {number} [opts.setBatchSize]
+ * @param {boolean} [opts.reset]
+ * @param {(msg: string) => void} [opts.onProgress] - called at each phase/batch
+ *   boundary; no-op by default (used by `main()` to show liveness on a slow
+ *   full-XL manual seed).
  */
-export async function seedAnkiPerfDeck(plan, { anki = ankiRequest } = {}) {
+export async function seedAnkiPerfDeck(
+  plan,
+  { anki = ankiRequest, batchSize = 500, setBatchSize = 200, reset = true, onProgress = () => {} } = {}
+) {
   await anki('createDeck', { deck: DECK_NAME });
 
-  for (const { expression, targetType, targetQueue } of plan) {
-    await anki('addNotes', {
-      notes: [{
-        deckName: DECK_NAME,
-        modelName: MODEL_NAME,
-        fields: { Expression: expression, vocabularyEnglish: '' },
-        options: { allowDuplicate: true, duplicateScope: 'deck' },
-      }],
+  if (reset) {
+    const existingIds = await anki('findNotes', { query: `deck:"${DECK_NAME}"` });
+    if (existingIds.length > 0) {
+      onProgress(`reset: deleting ${existingIds.length} existing note(s)`);
+      await anki('deleteNotes', { notes: existingIds });
+    }
+  }
+
+  const noteIds = [];
+  for (const planChunk of chunk(plan, batchSize)) {
+    const notes = planChunk.map(({ expression }) => ({
+      deckName: DECK_NAME,
+      modelName: MODEL_NAME,
+      fields: { Expression: expression, vocabularyEnglish: '' },
+      options: { allowDuplicate: true, duplicateScope: 'deck' },
+    }));
+    const chunkNoteIds = await anki('addNotes', { notes });
+    const failedIndex = chunkNoteIds.findIndex((id) => id === null);
+    if (failedIndex !== -1) {
+      const planIndex = noteIds.length + failedIndex;
+      throw new Error(`seedAnkiPerfDeck: addNotes returned null noteId for plan index ${planIndex}`);
+    }
+    noteIds.push(...chunkNoteIds);
+    onProgress(`addNotes: ${noteIds.length}/${plan.length} note(s) added`);
+  }
+
+  const cardIds = [];
+  for (const idChunk of chunk(noteIds, batchSize)) {
+    const infos = await anki('notesInfo', { notes: idChunk });
+    idChunk.forEach((expectedNoteId, i) => {
+      const info = infos.find((candidate) => candidate.noteId === expectedNoteId) ?? infos[i];
+      if (info.cards.length !== 1) {
+        throw new Error(`seedAnkiPerfDeck: expected exactly 1 card for noteId ${expectedNoteId}, got ${info.cards.length}`);
+      }
+      cardIds.push(info.cards[0]);
     });
-    const cardIds = await anki('findCards', {
-      query: `deck:"${DECK_NAME}" Expression:"${expression}"`,
-    });
-    const cardId = cardIds[cardIds.length - 1];
-    await anki('setSpecificValueOfCard', {
-      card: cardId,
-      keys: ['type', 'queue'],
-      newValues: [targetType, targetQueue],
-      warning_check: true,
-    });
+  }
+
+  const indexedPlan = plan.map((entry, i) => ({ ...entry, cardId: cardIds[i] }));
+  let setDone = 0;
+  for (const planChunk of chunk(indexedPlan, setBatchSize)) {
+    const actions = planChunk.map(({ cardId, targetType, targetQueue }) => ({
+      action: 'setSpecificValueOfCard',
+      params: {
+        card: cardId,
+        keys: ['type', 'queue'],
+        newValues: [targetType, targetQueue],
+        warning_check: true,
+      },
+    }));
+    await anki('multi', { actions });
+    setDone += planChunk.length;
+    onProgress(`setSpecificValueOfCard: ${setDone}/${plan.length} card(s) updated`);
   }
 }
 
@@ -96,7 +150,7 @@ async function main() {
   const vocab = wideVocabulary(wideVocabSize(SIZES.XL));
   const plan = computeDeckPlan(vocab);
   console.log(`Seeding ${plan.length} notes into ${DECK_NAME}...`);
-  await seedAnkiPerfDeck(plan);
+  await seedAnkiPerfDeck(plan, { onProgress: (msg) => console.log(`  ${msg}`) });
   console.log('Done.');
 }
 
