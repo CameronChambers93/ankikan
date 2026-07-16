@@ -65,6 +65,18 @@ async function clearStorage(page) {
   );
 }
 
+/**
+ * Reveals the granular style controls. Issue #47 restructured the options page so
+ * every schema-generated control lives inside a collapsed <details id="style-advanced">
+ * (progressive disclosure), and per-category controls sit inside hidden tab panels.
+ * Both must be opened before Playwright can interact with those inputs. Pass a
+ * `category` to also activate its per-category tab panel.
+ */
+async function revealStyleControls(page, category) {
+  await page.locator('#style-advanced').locator('summary').click();
+  if (category) await page.locator(`#style-tab-${category}`).click();
+}
+
 /** Returns the computed `background-color` of the element matched by `sel`, from inside `page`. */
 async function computedBgColor(page, sel) {
   return page.locator(sel).evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -86,6 +98,7 @@ test('T-46-010 editing #global-bg-color updates the #style-preview unknown swatc
   // in-memory edit instantly — no Save button click, no page.reload(), no re-navigation.
   const page = await openOptionsPage();
   await clearStorage(page);
+  await revealStyleControls(page);
 
   const previewSpan = page.locator('#style-preview .anki-unknown');
   await expect(previewSpan).toBeVisible();
@@ -121,6 +134,7 @@ test('T-46-011 enabling a per-category override updates only the learning swatch
   // (never touched) proves the change is scoped to the edited category only.
   const page = await openOptionsPage();
   await clearStorage(page);
+  await revealStyleControls(page, 'learning');
 
   const learningSpan = page.locator('#style-preview .anki-learning');
   const learnedSpan = page.locator('#style-preview .anki-learned');

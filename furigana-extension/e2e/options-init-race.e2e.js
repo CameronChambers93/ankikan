@@ -71,6 +71,18 @@ async function clearStorage(page) {
   );
 }
 
+/**
+ * Reveals the granular style controls. Issue #47 restructured the options page so
+ * every schema-generated control lives inside a collapsed <details id="style-advanced">
+ * (progressive disclosure), and per-category controls sit inside hidden tab panels.
+ * Both must be opened before Playwright can interact with those inputs. Pass a
+ * `category` to also activate its per-category tab panel.
+ */
+async function revealStyleControls(page, category) {
+  await page.locator('#style-advanced').locator('summary').click();
+  if (category) await page.locator(`#style-tab-${category}`).click();
+}
+
 // ---------------------------------------------------------------------------
 // AC-6 — Enable checkbox always toggles its paired colour input, regardless of
 // initial storage-read timing, and the change persists to chrome.storage.local.
@@ -84,6 +96,11 @@ test('T-65-008 checking unlearned-bg-color-enabled on a freshly-loaded options p
   // options page — the exact scenario in which the init race can occur (a fresh
   // top-level module evaluation racing the checkbox interaction below).
   await page.reload();
+  // #47 hides the granular controls behind a collapsed <details> + per-category
+  // tabs; reveal the unlearned panel before driving its enable checkbox. The init
+  // race being probed is unaffected — the disclosure/tab wiring is synchronous and
+  // separate from the awaited storage read whose timing this test exercises.
+  await revealStyleControls(page, 'unlearned');
 
   // This is the exact interaction that times out with "element is not enabled"
   // under the bug: check the enable checkbox, then immediately fill its paired
