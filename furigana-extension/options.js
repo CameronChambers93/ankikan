@@ -3,7 +3,10 @@ import {
   BUILT_IN_STYLE_FALLBACK,
   STYLE_SCHEMA,
   STYLE_CATEGORIES,
+  STYLE_PRESETS,
   resolveStyleSettings,
+  applyPreset,
+  matchPreset,
   buildStyleSheet,
 } from './style-util.js';
 import { ZipReader, BlobReader, BlobWriter } from '@zip.js/zip.js';
@@ -45,20 +48,51 @@ function ensureStyleControls(doc) {
   if (!container) return;
   if (doc.getElementById(`global-${STYLE_SCHEMA[0].id}`)) return;
 
-  const defaultRow = doc.createElement('div');
+  const groupContainers = {};
   for (const entry of STYLE_SCHEMA) {
+    let groupEl = groupContainers[entry.group];
+    if (!groupEl) {
+      groupEl = doc.createElement('div');
+      groupEl.dataset.styleGroup = entry.group;
+      const heading = doc.createElement('h3');
+      heading.textContent = entry.group.charAt(0).toUpperCase() + entry.group.slice(1);
+      groupEl.appendChild(heading);
+      groupContainers[entry.group] = groupEl;
+      container.appendChild(groupEl);
+    }
     const label = doc.createElement('label');
     label.textContent = `Default ${entry.key} `;
     const input = doc.createElement('input');
     input.id = `global-${entry.id}`;
     applyControlAttributes(input, entry);
     label.appendChild(input);
-    defaultRow.appendChild(label);
+    groupEl.appendChild(label);
   }
-  container.appendChild(defaultRow);
 
-  for (const cat of STYLE_CATEGORIES) {
-    const row = doc.createElement('div');
+  const tablist = doc.createElement('div');
+  tablist.setAttribute('role', 'tablist');
+  container.appendChild(tablist);
+
+  STYLE_CATEGORIES.forEach((cat, index) => {
+    const tab = doc.createElement('button');
+    tab.type = 'button';
+    tab.setAttribute('role', 'tab');
+    tab.classList.add('style-category-tab');
+    tab.id = `style-tab-${cat}`;
+    tab.dataset.category = cat;
+    tab.setAttribute('aria-controls', `style-panel-${cat}`);
+    tab.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
+    tab.textContent = cat.charAt(0).toUpperCase() + cat.slice(1);
+    tablist.appendChild(tab);
+
+    const panel = doc.createElement('div');
+    panel.classList.add('style-category-panel');
+    panel.setAttribute('role', 'tabpanel');
+    panel.id = `style-panel-${cat}`;
+    panel.dataset.categoryPanel = cat;
+    panel.setAttribute('aria-labelledby', `style-tab-${cat}`);
+    if (index !== 0) panel.setAttribute('hidden', '');
+
     for (const entry of STYLE_SCHEMA) {
       const label = doc.createElement('label');
       const enabled = doc.createElement('input');
@@ -70,10 +104,51 @@ function ensureStyleControls(doc) {
       input.id = `${cat}-${entry.id}`;
       applyControlAttributes(input, entry);
       label.appendChild(input);
-      row.appendChild(label);
+      panel.appendChild(label);
     }
-    container.appendChild(row);
+    container.appendChild(panel);
+  });
+}
+
+/**
+ * Shows `#style-panel-<cat>` and hides every other `.style-category-panel`,
+ * moving `aria-selected="true"` to `#style-tab-<cat>` (all other tabs get
+ * `"false"`).
+ *
+ * @param {Document} doc
+ * @param {string} cat
+ */
+export function selectStyleCategory(doc, cat) {
+  doc.querySelectorAll('.style-category-panel').forEach((panel) => {
+    if (panel.dataset.categoryPanel === cat) panel.removeAttribute('hidden');
+    else panel.setAttribute('hidden', '');
+  });
+  doc.querySelectorAll('.style-category-tab').forEach((tab) => {
+    tab.setAttribute('aria-selected', tab.dataset.category === cat ? 'true' : 'false');
+  });
+}
+
+/**
+ * Populates `#style-preset` with one <option> per STYLE_PRESETS entry (in
+ * insertion order) plus a trailing "Custom" option. No-op if the element is
+ * absent or already populated.
+ *
+ * @param {Document} doc
+ */
+function ensurePresetOptions(doc) {
+  const select = doc.getElementById('style-preset');
+  if (!select || select.options.length) return;
+
+  for (const [key, preset] of Object.entries(STYLE_PRESETS)) {
+    const option = doc.createElement('option');
+    option.value = key;
+    option.textContent = preset.label;
+    select.appendChild(option);
   }
+  const customOption = doc.createElement('option');
+  customOption.value = 'custom';
+  customOption.textContent = 'Custom';
+  select.appendChild(customOption);
 }
 
 /**
@@ -86,9 +161,13 @@ function ensureStyleControls(doc) {
  */
 export async function loadStyleSettings(doc, storageGet, isPreserved = () => false) {
   ensureStyleControls(doc);
+  ensurePresetOptions(doc);
 
   const data = await storageGet({ styleSettings: STYLE_DEFAULTS.styleSettings });
   const styleSettings = resolveStyleSettings(data.styleSettings);
+
+  const presetEl = doc.getElementById('style-preset');
+  if (presetEl) presetEl.value = matchPreset(styleSettings) ?? 'custom';
 
   for (const entry of STYLE_SCHEMA) {
     const globalEl = doc.getElementById(`global-${entry.id}`);
@@ -203,6 +282,34 @@ export async function onStyleChange(doc, storageSet, messageFn) {
   const styleSettings = currentStyleSettings(doc);
   await storageSet({ styleSettings });
   messageFn({ action: 'refreshStyles', styleSettings });
+
+  const sel = doc.getElementById('style-preset');
+  if (sel) sel.value = matchPreset(styleSettings) ?? 'custom';
+}
+
+/**
+ * Applies the preset selected in `#style-preset` over the current style
+ * settings, writes the merged default-layer values back into the generated
+ * inputs, and persists via the same contract as onStyleChange.
+ *
+ * @param {Document} doc
+ * @param {Function} storageSet - Called with { styleSettings }
+ * @param {Function} messageFn  - Called with { action: 'refreshStyles', styleSettings }
+ */
+export async function onPresetChange(doc, storageSet, messageFn) {
+  const value = doc.getElementById('style-preset').value;
+  const merged = applyPreset(currentStyleSettings(doc), value);
+
+  for (const entry of STYLE_SCHEMA) {
+    const globalEl = doc.getElementById(`global-${entry.id}`);
+    if (globalEl) globalEl.value = merged.default[entry.key];
+  }
+
+  await storageSet({ styleSettings: merged });
+  messageFn({ action: 'refreshStyles', styleSettings: merged });
+
+  doc.getElementById('style-preset').value = matchPreset(merged) ?? value;
+  renderPreview(doc);
 }
 
 /**
@@ -371,10 +478,20 @@ if (typeof document !== 'undefined' && ext) {
     }
   }
 
+  for (const cat of STYLE_CATEGORIES) {
+    document.getElementById(`style-tab-${cat}`)?.addEventListener('click', () =>
+      selectStyleCategory(document, cat)
+    );
+  }
+
   document.getElementById('resetStylesBtn')?.addEventListener('click', () => {
     resetOptionsToDefaults(document, storageSet, messageFn);
     renderPreview(document);
   });
+
+  document.getElementById('style-preset')?.addEventListener('change', () =>
+    onPresetChange(document, storageSet, messageFn)
+  );
 
   ext.storage.onChanged.addListener((changes) => {
     if ('styleSettings' in changes && !changes.styleSettings.newValue) {

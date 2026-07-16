@@ -47,12 +47,36 @@ test.afterAll(async () => {
   await browserContext?.close();
 });
 
+/**
+ * Issue #47 moved the schema-generated style controls behind a collapsed
+ * <details id="style-advanced">. Pre-#47 tests interact with those controls
+ * directly, so expand the panel after load to make them visible/actionable.
+ * No-op when the panel is absent (older markup / non-options pages).
+ */
+async function expandStyleAdvanced(page) {
+  await page.evaluate(() => {
+    const d = document.getElementById('style-advanced');
+    if (d) d.open = true;
+  });
+}
+
+/**
+ * Issue #47 also moved the per-category override controls behind a tabbed UI
+ * (only one category's panel is visible at a time). Pre-#47 tests interact
+ * with unlearned/learning/learned controls directly, so select that
+ * category's tab first to make its panel visible/actionable.
+ */
+async function selectCategoryTab(page, cat) {
+  await page.locator(`#style-tab-${cat}`).click();
+}
+
 /** Opens options.html as a new page in the shared browser context (style controls moved here in issue #6). */
 async function openPopup() {
   const [background] = browserContext.serviceWorkers();
   const extensionId = background.url().split('/')[2];
   const popup = await browserContext.newPage();
   await popup.goto(`chrome-extension://${extensionId}/options.html`);
+  await expandStyleAdvanced(popup);
   return popup;
 }
 
@@ -116,6 +140,7 @@ test('unlearned bg-color is persisted when unlearned-bg-color-enabled checkbox i
   await clearStorage(popup);
 
   // Check the enable-override checkbox for the unlearned category
+  await selectCategoryTab(popup, 'unlearned');
   await popup.locator('#unlearned-bg-color-enabled').check();
 
   // Set the per-category colour and trigger save
@@ -151,6 +176,12 @@ test('per-category styleSettings entries are empty objects when enable checkboxe
   // Empty objects are the correct representation of "no override".
   const popup = await openPopup();
   await clearStorage(popup);
+  // Reload so the inputs reflect the just-cleared storage. Without this the page
+  // still shows a prior test's persisted per-category override (enable checkbox
+  // checked), which the opacity change below would re-persist. Reload re-collapses
+  // the Advanced <details>, so re-expand it before touching the controls.
+  await popup.reload();
+  await expandStyleAdvanced(popup);
 
   // Change only the global opacity (a numeric input, not a colour input) to trigger a save
   await popup.locator('#global-bg-opacity').fill('0.5');
@@ -179,6 +210,7 @@ test('Reset to defaults button unchecks all per-category bg-color enable checkbo
   await clearStorage(popup);
 
   // Put the popup into a state where the enable checkbox is checked and a colour is set
+  await selectCategoryTab(popup, 'unlearned');
   await popup.locator('#unlearned-bg-color-enabled').check();
   await popup.locator('#unlearned-bg-color').fill('#aa1122');
   await popup.locator('#unlearned-bg-color').dispatchEvent('input');
