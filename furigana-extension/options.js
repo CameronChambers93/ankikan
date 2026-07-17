@@ -33,7 +33,34 @@ function applyControlAttributes(input, entry) {
     input.step = '1';
     if (entry.min !== undefined) input.min = String(entry.min);
     if (entry.max !== undefined) input.max = String(entry.max);
+  } else if (entry.type === 'bool') {
+    input.type = 'checkbox';
   }
+}
+
+/**
+ * Creates the DOM control element for a STYLE_SCHEMA entry: a <select> with one
+ * <option> per entry.options for "enum" entries, otherwise an <input> configured
+ * by applyControlAttributes.
+ *
+ * @param {Document} doc
+ * @param {object} entry - A STYLE_SCHEMA entry.
+ * @returns {HTMLElement}
+ */
+function createStyleControl(doc, entry) {
+  if (entry.type === 'enum') {
+    const select = doc.createElement('select');
+    for (const option of entry.options) {
+      const optionEl = doc.createElement('option');
+      optionEl.value = option;
+      optionEl.textContent = option;
+      select.appendChild(optionEl);
+    }
+    return select;
+  }
+  const input = doc.createElement('input');
+  applyControlAttributes(input, entry);
+  return input;
 }
 
 /**
@@ -62,9 +89,8 @@ function ensureStyleControls(doc) {
     }
     const label = doc.createElement('label');
     label.textContent = `Default ${entry.key} `;
-    const input = doc.createElement('input');
+    const input = createStyleControl(doc, entry);
     input.id = `global-${entry.id}`;
-    applyControlAttributes(input, entry);
     label.appendChild(input);
     groupEl.appendChild(label);
   }
@@ -100,9 +126,8 @@ function ensureStyleControls(doc) {
       enabled.id = `${cat}-${entry.id}-enabled`;
       label.appendChild(enabled);
       label.appendChild(doc.createTextNode(` ${cat} ${entry.key} `));
-      const input = doc.createElement('input');
+      const input = createStyleControl(doc, entry);
       input.id = `${cat}-${entry.id}`;
-      applyControlAttributes(input, entry);
       label.appendChild(input);
       panel.appendChild(label);
     }
@@ -172,7 +197,11 @@ export async function loadStyleSettings(doc, storageGet, isPreserved = () => fal
   for (const entry of STYLE_SCHEMA) {
     const globalEl = doc.getElementById(`global-${entry.id}`);
     if (globalEl && !isPreserved(`global-${entry.id}`)) {
-      globalEl.value = styleSettings.default[entry.key];
+      if (entry.type === 'bool') {
+        globalEl.checked = styleSettings.default[entry.key] === true;
+      } else {
+        globalEl.value = styleSettings.default[entry.key];
+      }
     }
 
     for (const cat of STYLE_CATEGORIES) {
@@ -188,26 +217,37 @@ export async function loadStyleSettings(doc, storageGet, isPreserved = () => fal
       if (enabledEl) {
         enabledEl.checked = has;
         if (valueEl) {
-          valueEl.value = has ? overrides[entry.key] : (BUILT_IN_STYLE_FALLBACK[cat]?.[entry.key] ?? '');
+          if (entry.type === 'bool') {
+            valueEl.checked = has ? overrides[entry.key] === true : false;
+          } else {
+            valueEl.value = has ? overrides[entry.key] : (BUILT_IN_STYLE_FALLBACK[cat]?.[entry.key] ?? '');
+          }
           valueEl.disabled = !has;
         }
       } else if (valueEl) {
-        valueEl.value = has ? overrides[entry.key] : '';
+        if (entry.type === 'bool') {
+          valueEl.checked = has ? overrides[entry.key] === true : false;
+        } else {
+          valueEl.value = has ? overrides[entry.key] : '';
+        }
       }
     }
   }
 }
 
 /**
- * Coerces a raw input string to the type expected for a STYLE_SCHEMA entry's key
- * (string for colours, Number for opacity/px).
+ * Coerces a control element's value to the type expected for a STYLE_SCHEMA
+ * entry's key (string for colours/enums, boolean for bools, Number for
+ * opacity/px).
  *
  * @param {object} entry - A STYLE_SCHEMA entry.
- * @param {string} raw
- * @returns {string|number}
+ * @param {HTMLElement} el
+ * @returns {string|number|boolean}
  */
-function coerceValue(entry, raw) {
-  return entry.type === 'color' ? raw : Number(raw);
+function coerceValue(entry, el) {
+  if (entry.type === 'color' || entry.type === 'enum') return el.value;
+  if (entry.type === 'bool') return el.checked;
+  return Number(el.value);
 }
 
 /**
@@ -226,7 +266,7 @@ export function currentStyleSettings(doc) {
   const result = { default: {} };
   for (const entry of STYLE_SCHEMA) {
     const el = doc.getElementById(`global-${entry.id}`);
-    result.default[entry.key] = coerceValue(entry, el.value);
+    if (el) result.default[entry.key] = coerceValue(entry, el);
   }
 
   for (const cat of STYLE_CATEGORIES) {
@@ -236,10 +276,10 @@ export function currentStyleSettings(doc) {
       const valueEl = doc.getElementById(`${cat}-${entry.id}`);
       if (enabledEl) {
         if (enabledEl.checked && valueEl) {
-          result[cat][entry.key] = coerceValue(entry, valueEl.value);
+          result[cat][entry.key] = coerceValue(entry, valueEl);
         }
       } else if (valueEl && valueEl.value !== '') {
-        result[cat][entry.key] = coerceValue(entry, valueEl.value);
+        result[cat][entry.key] = coerceValue(entry, valueEl);
       }
     }
   }
@@ -302,7 +342,10 @@ export async function onPresetChange(doc, storageSet, messageFn) {
 
   for (const entry of STYLE_SCHEMA) {
     const globalEl = doc.getElementById(`global-${entry.id}`);
-    if (globalEl) globalEl.value = merged.default[entry.key];
+    if (globalEl) {
+      if (entry.type === 'bool') globalEl.checked = merged.default[entry.key] === true;
+      else globalEl.value = merged.default[entry.key];
+    }
   }
 
   await storageSet({ styleSettings: merged });
@@ -325,7 +368,10 @@ export async function resetOptionsToDefaults(doc, storageSet, messageFn) {
 
   for (const entry of STYLE_SCHEMA) {
     const globalEl = doc.getElementById(`global-${entry.id}`);
-    if (globalEl) globalEl.value = defaults.default[entry.key];
+    if (globalEl) {
+      if (entry.type === 'bool') globalEl.checked = defaults.default[entry.key] === true;
+      else globalEl.value = defaults.default[entry.key];
+    }
 
     for (const cat of STYLE_CATEGORIES) {
       const enabledEl = doc.getElementById(`${cat}-${entry.id}-enabled`);
@@ -334,10 +380,12 @@ export async function resetOptionsToDefaults(doc, storageSet, messageFn) {
         enabledEl.checked = false;
         if (valueEl) {
           valueEl.disabled = true;
-          valueEl.value = BUILT_IN_STYLE_FALLBACK[cat]?.[entry.key] ?? '';
+          if (entry.type === 'bool') valueEl.checked = BUILT_IN_STYLE_FALLBACK[cat]?.[entry.key] === true;
+          else valueEl.value = BUILT_IN_STYLE_FALLBACK[cat]?.[entry.key] ?? '';
         }
       } else if (valueEl) {
-        valueEl.value = '';
+        if (entry.type === 'bool') valueEl.checked = false;
+        else valueEl.value = '';
       }
     }
   }

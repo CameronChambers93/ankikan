@@ -34,12 +34,16 @@ export const BUILT_IN_STYLE_FALLBACK = {
  * property only requires a new entry here.
  */
 export const STYLE_SCHEMA = [
-  { key: 'backgroundColor',   id: 'bg-color',       type: 'color',   group: 'fill' },
-  { key: 'backgroundOpacity', id: 'bg-opacity',      type: 'opacity', group: 'fill',   pairsWith: 'backgroundColor' },
-  { key: 'borderRadius',      id: 'border-radius',   type: 'px',      group: 'shape',  min: 0, max: 20 },
-  { key: 'outlineColor',      id: 'outline-color',   type: 'color',   group: 'border' },
-  { key: 'outlineOpacity',    id: 'outline-opacity', type: 'opacity', group: 'border', pairsWith: 'outlineColor' },
-  { key: 'outlineWidth',      id: 'outline-width',   type: 'px',      group: 'border', min: 0, max: 6 },
+  { key: 'backgroundColor',      id: 'bg-color',        type: 'color',   group: 'fill' },
+  { key: 'backgroundOpacity',    id: 'bg-opacity',       type: 'opacity', group: 'fill',   pairsWith: 'backgroundColor' },
+  { key: 'borderRadius',         id: 'border-radius',    type: 'px',      group: 'shape',  min: 0, max: 20 },
+  { key: 'outlineColor',         id: 'outline-color',    type: 'color',   group: 'border' },
+  { key: 'outlineOpacity',       id: 'outline-opacity',  type: 'opacity', group: 'border', pairsWith: 'outlineColor' },
+  { key: 'outlineWidth',         id: 'outline-width',    type: 'px',      group: 'border', min: 0, max: 6 },
+  { key: 'textColor',            id: 'text-color',       type: 'color',   group: 'text' },
+  { key: 'fontWeight',           id: 'font-weight',      type: 'bool',    group: 'text' },
+  { key: 'textDecorationStyle',  id: 'underline-style',  type: 'enum',    group: 'text', options: ['none', 'solid', 'dotted', 'dashed', 'wavy'] },
+  { key: 'textDecorationColor',  id: 'underline-color',  type: 'color',   group: 'text' },
 ];
 
 /** Anki status categories, in the exact order buildStyleSheet renders their CSS rules. */
@@ -78,8 +82,11 @@ export function applyPreset(current, presetName) {
  * Returns the STYLE_PRESETS key that fully explains `styleSettings.default`:
  * every key the preset declares must equal its preset value, and every other
  * STYLE_SCHEMA key must still equal its STYLE_DEFAULTS value (i.e. untouched
- * by the preset). Returns `null` if no preset matches (i.e. the settings are
- * "Custom").
+ * by the preset). Schema keys with no canonical value in either the preset or
+ * STYLE_DEFAULTS (e.g. the issue #48 text-group properties, which are
+ * intentionally absent from STYLE_DEFAULTS) are outside any preset's concern
+ * and never disqualify a match. Returns `null` if no preset matches (i.e. the
+ * settings are "Custom").
  *
  * @param {object} styleSettings
  * @returns {string|null}
@@ -88,6 +95,9 @@ export function matchPreset(styleSettings) {
   for (const [key, preset] of Object.entries(STYLE_PRESETS)) {
     const presetDefaults = preset.settings.default;
     const matches = STYLE_SCHEMA.every((entry) => {
+      if (!(entry.key in presetDefaults) && !(entry.key in STYLE_DEFAULTS.styleSettings.default)) {
+        return true;
+      }
       const expected = entry.key in presetDefaults
         ? presetDefaults[entry.key]
         : STYLE_DEFAULTS.styleSettings.default[entry.key];
@@ -115,10 +125,21 @@ const CSS_GROUP_RENDERERS = {
     const olColor = ol ? `rgba(${ol.r}, ${ol.g}, ${ol.b}, ${s.outlineOpacity})` : 'transparent';
     return `outline: ${s.outlineWidth}px solid ${olColor};`;
   },
+  text: (s) => {
+    const parts = [];
+    if (s.textColor) parts.push(`color: ${s.textColor};`);
+    if (s.fontWeight === true) parts.push('font-weight: bold;');
+    if (s.textDecorationStyle && s.textDecorationStyle !== 'none') {
+      parts.push('text-decoration-line: underline;');
+      parts.push(`text-decoration-style: ${s.textDecorationStyle};`);
+      if (s.textDecorationColor) parts.push(`text-decoration-color: ${s.textDecorationColor};`);
+    }
+    return parts.join(' ');
+  },
 };
 
 /** Declaration order within a `.anki-<cat> { … }` rule, matching the pre-refactor output. */
-const CSS_GROUP_ORDER = ['fill', 'shape', 'border'];
+const CSS_GROUP_ORDER = ['fill', 'shape', 'border', 'text'];
 
 /**
  * Parses a 3- or 6-digit CSS hex color string into `{r, g, b}` integer components.
@@ -210,7 +231,7 @@ export function injectStyles(doc, styleSettings) {
 export function buildStyleSheet(styleSettings) {
   return STYLE_CATEGORIES.map((cat) => {
     const s = resolveCategory(styleSettings, cat);
-    const decls = CSS_GROUP_ORDER.map((group) => CSS_GROUP_RENDERERS[group](s)).join(' ');
+    const decls = CSS_GROUP_ORDER.map((group) => CSS_GROUP_RENDERERS[group](s)).filter((d) => d).join(' ');
     return `.anki-${cat} { ${decls} }`;
   }).join('\n');
 }

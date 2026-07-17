@@ -41,6 +41,11 @@ const DISTINCT_VALUES = {
   outlineColor: '#654321',
   outlineOpacity: 0.66,
   outlineWidth: 4,
+  // Issue #48 additions.
+  textColor: '#abcdef',
+  fontWeight: true,
+  textDecorationStyle: 'dotted',
+  textDecorationColor: '#fedcba',
 };
 
 describe('schema-driven #style-controls generation (issue #45 AC-2)', () => {
@@ -89,7 +94,10 @@ describe('currentStyleSettings round-trips every schema property (issue #45 AC-2
       const el = doc.getElementById(`global-${entry.id}`);
       const value = DISTINCT_VALUES[entry.key];
       expect(value, `no test fixture value defined for schema key "${entry.key}"`).toBeDefined();
-      el.value = String(value);
+      // Issue #48's "bool" entries (fontWeight) round-trip through .checked, not
+      // .value -- a checkbox's .value is unrelated to whether it's checked.
+      if (entry.type === 'bool') el.checked = value;
+      else el.value = String(value);
     }
 
     const result = currentStyleSettings(doc);
@@ -148,9 +156,18 @@ describe('resetOptionsToDefaults restores every schema property (issue #45 AC-2)
 
     for (const entry of STYLE_SCHEMA) {
       const el = doc.getElementById(`global-${entry.id}`);
-      expect(Number(el.value) || el.value).toEqual(
-        Number(STYLE_DEFAULTS.styleSettings.default[entry.key]) || STYLE_DEFAULTS.styleSettings.default[entry.key]
-      );
+      // Issue #48 adds schema entries (textColor, fontWeight, textDecorationStyle,
+      // textDecorationColor) that are deliberately absent from
+      // STYLE_DEFAULTS.styleSettings.default (see style-util.text.test.js T-48-006 --
+      // the golden CSS must stay byte-identical, so these keys have no "default"
+      // value to restore). Comparing a DOM control's raw .value against `undefined`
+      // is meaningless for those keys, so this assertion only applies to entries
+      // STYLE_DEFAULTS actually declares a value for.
+      if (entry.key in STYLE_DEFAULTS.styleSettings.default) {
+        expect(Number(el.value) || el.value).toEqual(
+          Number(STYLE_DEFAULTS.styleSettings.default[entry.key]) || STYLE_DEFAULTS.styleSettings.default[entry.key]
+        );
+      }
       for (const cat of STYLE_CATEGORIES) {
         const enabledEl = doc.getElementById(`${cat}-${entry.id}-enabled`);
         expect(enabledEl.checked, `#${cat}-${entry.id}-enabled must be unchecked after reset`).toBe(false);

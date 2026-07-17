@@ -97,12 +97,16 @@ describe('STYLE_SCHEMA / STYLE_CATEGORIES (issue #45 AC-3)', () => {
       'outlineColor',
       'outlineOpacity',
       'outlineWidth',
+      'textColor',
+      'fontWeight',
+      'textDecorationStyle',
+      'textDecorationColor',
     ];
     const actualKeys = STYLE_SCHEMA.map((entry) => entry.key);
     for (const key of expectedKeys) {
       expect(actualKeys, `STYLE_SCHEMA must contain an entry for "${key}"`).toContain(key);
     }
-    expect(actualKeys.length, 'STYLE_SCHEMA must declare each of the 6 keys exactly once').toBe(expectedKeys.length);
+    expect(actualKeys.length, 'STYLE_SCHEMA must declare each of the 10 keys exactly once').toBe(expectedKeys.length);
 
     for (const entry of STYLE_SCHEMA) {
       expect(entry, `STYLE_SCHEMA entry for "${entry.key}" must have a "key"`).toHaveProperty('key');
