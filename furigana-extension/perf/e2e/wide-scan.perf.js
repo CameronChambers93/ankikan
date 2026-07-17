@@ -1,5 +1,6 @@
 /**
- * Tier-2 Playwright perf harness — wide-page SCAN scenario (issue #44, Slice 11).
+ * Tier-2 Playwright perf harness — wide-page SCAN scenario (issue #44,
+ * Slice 11 + Slice 12).
  *
  * Proves `scanPage` scales against a realistic wide-vocabulary page at Tier-2
  * size: a large total `<span>` count (O(spans) DOM-walk + `extractWord`)
@@ -19,6 +20,15 @@
  * open, no `clearStorage`/`seedStorage` call, and no `seedKuromojiDict` call
  * here — that is the load-bearing absence, not an oversight.
  *
+ * SLICE 12 ADDITION (AC-27...31): a SECOND live browser size (`SIZES.S`) is
+ * captured in the SAME run, confirming the wide-page scaling claim live at
+ * two sizes rather than one. `wideVocabulary` is seed-prefix-consistent (a
+ * smaller size's vocabulary is always a strict prefix of a larger size's), so
+ * the already-seeded `AnkiKan-Perf` deck (sized for SIZES.L) is a superset of
+ * SIZES.S's vocabulary too — the second capture reuses the SAME seeded deck,
+ * no second reseed. The second capture opens a second page in the SAME
+ * `browserContext`, closing it once its measures are read.
+ *
  * PREREQUISITES:
  *   - Anki must be running with AnkiConnect on localhost:8765 (port OCCUPIED).
  *   - NO pre-seeded deck is required beyond what this file seeds itself: the
@@ -31,12 +41,12 @@
  * Run with:
  *   pnpm exec playwright test --config=perf/playwright.perf.config.js wide-scan
  *
- * PERFORMANCE NOTE: all four tests below share ONE expensive `beforeAll`
+ * PERFORMANCE NOTE: all nine tests below share ONE expensive `beforeAll`
  * (live-Anki reseed of ~2,310 notes + real kuromoji tokenizer build + Node-side
- * fixture generation + extension launch + one scan), captured ONCE into
- * module-scope variables. Each `test()` then asserts a single facet of that
- * shared capture — the Slice 4/5/7 "one expensive shared setup, several facet
- * tests" pattern.
+ * fixture generation for TWO sizes + extension launch + two scans against two
+ * pages in the same context), captured ONCE into module-scope variables. Each
+ * `test()` then asserts a single facet of that shared capture — the Slice
+ * 4/5/7 "one expensive shared setup, several facet tests" pattern.
  */
 
 import { test, expect, chromium } from '@playwright/test';
@@ -50,6 +60,7 @@ import { SIZES } from '../fixtures/generate.js';
 import { generatePreSegmentedHTML } from '../fixtures/pre-segment.js';
 import { getTokenizer } from '../lib/tokenizer.js';
 import { domFromHTML } from '../lib/dom.js';
+import { extractWord, isJapanese } from '../../scan-util.js';
 import { assembleWideScanResult } from './lib/perf-results.js';
 import { writeResults, defaultIo } from '../lib/write-results.js';
 
@@ -57,12 +68,31 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // perf/e2e/ -> furigana-extension root (two levels up).
 const EXTENSION_PATH = path.resolve(__dirname, '../..');
 const FIXTURE_URL = 'http://test-wide-scan.local/';
+const FIXTURE_URL_SECOND = 'http://test-wide-scan-s.local/';
 
 // Real, non-fabricated plan built from the actual exported planning functions
 // (Slice 10's exact seeding computation) — module scope, pure, so both the
 // beforeAll reseed and T-44-146's pre-proven anki-unknown/anki-duplicate
 // expectations read from the identical plan.
 const plan = computeDeckPlan(wideVocabulary(wideVocabSize(SIZES.L)));
+
+/**
+ * Node-side ground truth for scanPage's distinct-lookup-word count: dedupes by
+ * `data-lemma` when present (mirroring `scanPage`'s own lookup-word
+ * resolution), falling back to the real `extractWord` span text, and drops
+ * any non-Japanese result — the same real helpers `scanPage` itself uses, so
+ * this is a faithful Node-side prediction of the live AnkiConnect payload
+ * size, not a reimplementation of `scanPage`.
+ * @param {HTMLElement} body
+ * @returns {number}
+ */
+function countDistinctLookupWords(body) {
+  return new Set(
+    [...body.querySelectorAll('span')]
+      .map((s) => s.dataset.lemma || extractWord(s))
+      .filter(isJapanese),
+  ).size;
+}
 
 // ---------------------------------------------------------------------------
 // Shared state: one browser context, one page, one scan, captured once.
@@ -85,7 +115,24 @@ let ankikanMeasures = [];
 /** @type {{ matched: boolean, unknown: boolean, duplicate: boolean }} */
 let statusFlags = { matched: false, unknown: false, duplicate: false };
 
-test.describe.serial('wide-scan perf harness (issue #44 AC-23...26)', () => {
+/** Slice 12: Node-computed expected total <span> count for the SIZES.S fixture. */
+let expectedSpanCountSecond = 0;
+/** Slice 12: live DOM total <span> count read back from the second page's scan. */
+let liveSpanCountSecond = 0;
+/** Slice 12: every measure name on the second page's main-world timeline. */
+let allMeasureNamesSecond = [];
+/**
+ * Slice 12: the `ankikan:`-namespaced measures read from the second page's
+ * MAIN world.
+ * @type {Array<{name: string, duration: number}>}
+ */
+let ankikanMeasuresSecond = [];
+/** Slice 12: Node-computed distinct-lookup-word count for the SIZES.L fixture. */
+let expectedDistinctWordCountL = 0;
+/** Slice 12: Node-computed distinct-lookup-word count for the SIZES.S fixture. */
+let expectedDistinctWordCountSecond = 0;
+
+test.describe.serial('wide-scan perf harness (issue #44 AC-23...31)', () => {
   test.describe.configure({ timeout: 120_000 });
 
   test.beforeAll(async () => {
@@ -114,6 +161,7 @@ test.describe.serial('wide-scan perf harness (issue #44 AC-23...26)', () => {
     );
     const { body } = domFromHTML(fixtureHTML);
     expectedSpanCount = body.querySelectorAll('span').length;
+    expectedDistinctWordCountL = countDistinctLookupWords(body);
 
     browserContext = await chromium.launchPersistentContext('', {
       headless: false,
@@ -169,6 +217,50 @@ test.describe.serial('wide-scan perf harness (issue #44 AC-23...26)', () => {
       prefix: 'wide-scan',
       io: defaultIo,
     });
+
+    // -------------------------------------------------------------------
+    // Slice 12 (AC-27...31): a SECOND live size, in the SAME run, against
+    // the SAME already-seeded AnkiKan-Perf deck. `wideVocabulary` is
+    // seed-prefix-consistent, so SIZES.S's vocabulary is a strict prefix of
+    // SIZES.L's — the deck seeded above (sized for SIZES.L) is already a
+    // superset of SIZES.S's vocabulary, so NO reseed is needed here.
+    // -------------------------------------------------------------------
+    const fixtureHTMLSecond = generatePreSegmentedHTML(
+      SIZES.S,
+      tokenizer.tokenize.bind(tokenizer),
+      { variant: 'wide' },
+    );
+    const { body: bodySecond } = domFromHTML(fixtureHTMLSecond);
+    expectedSpanCountSecond = bodySecond.querySelectorAll('span').length;
+    expectedDistinctWordCountSecond = countDistinctLookupWords(bodySecond);
+
+    const pageSecond = await browserContext.newPage();
+
+    await pageSecond.route(FIXTURE_URL_SECOND, (route) =>
+      route.fulfill({ contentType: 'text/html', body: fixtureHTMLSecond }),
+    );
+    await pageSecond.goto(FIXTURE_URL_SECOND);
+
+    await pageSecond.locator('[class*="anki-"]').first().waitFor({ timeout: 90_000 });
+
+    allMeasureNamesSecond = await pageSecond.evaluate(() =>
+      performance.getEntriesByType('measure').map((m) => m.name),
+    );
+    ankikanMeasuresSecond = await pageSecond.evaluate(() =>
+      performance
+        .getEntriesByType('measure')
+        .filter((m) => m.name.startsWith('ankikan:'))
+        .map((m) => ({ name: m.name, duration: m.duration })),
+    );
+    liveSpanCountSecond = await pageSecond.evaluate(() => document.querySelectorAll('span').length);
+
+    await pageSecond.close();
+
+    await writeResults(assembleWideScanResult(ankikanMeasuresSecond, { size: 'S' }), {
+      resultsDir: path.join(__dirname, '..', 'results'),
+      prefix: 'wide-scan-s',
+      io: defaultIo,
+    });
   });
 
   test.afterAll(async () => {
@@ -221,5 +313,53 @@ test.describe.serial('wide-scan perf harness (issue #44 AC-23...26)', () => {
     const total = ankikanMeasures.find((m) => m.name === PERF_NAMES.TOTAL);
     expect(total).toBeTruthy();
     expect(total.duration).toBeGreaterThan(0);
+  });
+
+  test('T-44-148 the second live size (SIZES.S) span count exactly matches its Node-computed expected span count (AC-27)', async () => {
+    // Same ground-truth proof as T-44-144, at the second size: the live DOM
+    // count must match the Node-parsed count exactly, so scanPage's
+    // no-drop/no-duplicate guarantee is confirmed at BOTH sizes in this run,
+    // not just at L.
+    expect(liveSpanCountSecond).toBe(expectedSpanCountSecond);
+  });
+
+  test('T-44-149 the L-size live span count is strictly greater than the second (S) size live span count (AC-28)', async () => {
+    // Direction-only check that the wide-page scaling claim holds live: a
+    // larger requested size must actually produce a larger live span count.
+    expect(liveSpanCount).toBeGreaterThan(liveSpanCountSecond);
+  });
+
+  test('T-44-150 at the second size, the four phase measures are present and t_segment is absent (AC-29)', async () => {
+    // Mirrors T-44-145 at the second size: the "no dict-seed needed" design
+    // (lemmaMode resolves to 'off') must hold regardless of page size.
+    expect(allMeasureNamesSecond).toContain(PERF_NAMES.ANKI_FINDCARDS);
+    expect(allMeasureNamesSecond).toContain(PERF_NAMES.ANKI_CARDSINFO);
+    expect(allMeasureNamesSecond).toContain(PERF_NAMES.DOM_INJECT);
+    expect(allMeasureNamesSecond).toContain(PERF_NAMES.TOTAL);
+    expect(allMeasureNamesSecond).not.toContain(PERF_NAMES.SEGMENT);
+  });
+
+  test('T-44-151 the L-size DOM-inject and total durations are each >= the second (S) size durations (AC-30)', async () => {
+    // Direction/`>=` only, NEVER an absolute-ms threshold or strict `>`:
+    // hardware/JIT variance across a single CI run can make two timings of a
+    // small page nearly identical, or occasionally even edge past a larger
+    // page's timing on a noisy run for a near-zero-cost phase; `>=` is the
+    // scaling claim this slice can honestly stand behind.
+    for (const name of [PERF_NAMES.DOM_INJECT, PERF_NAMES.TOTAL]) {
+      const measureL = ankikanMeasures.find((m) => m.name === name);
+      const measureSecond = ankikanMeasuresSecond.find((m) => m.name === name);
+      expect(measureL).toBeTruthy();
+      expect(measureSecond).toBeTruthy();
+      expect(measureL.duration).toBeGreaterThanOrEqual(measureSecond.duration);
+    }
+  });
+
+  test('T-44-152 the L-size distinct-lookup-word count is strictly greater than the second (S) size count (AC-31)', async () => {
+    // A deterministic, Node-computed payload-scaling guard, decoupled from
+    // network timing: the number of DISTINCT words scanPage sends to
+    // AnkiConnect (the actual driver of findCards/cardsInfo payload size)
+    // must strictly grow with page size, independent of any live duration
+    // measurement's variance.
+    expect(expectedDistinctWordCountL).toBeGreaterThan(expectedDistinctWordCountSecond);
   });
 });

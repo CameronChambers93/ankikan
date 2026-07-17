@@ -46,7 +46,10 @@ needs **no kuromoji dict-seed** — the extension's default (unseeded) storage
 resolves `lemmaMode` to `'off'`, so `segmentAndWrap` never runs client-side and
 `scanPage` is exercised directly against a Node-built pre-segmented wide
 fixture, at full Tier-2 scale (8,445 spans / 2,854 distinct lookup words for
-SIZES.L), against the live, self-seeded `AnkiKan-Perf` deck. What remains:
+SIZES.L), against the live, self-seeded `AnkiKan-Perf` deck. **A second live size
+(SIZES.S) for `wide-scan` has since landed** (`assembleWideScanResult(measures,
+{size})` now parametrizes the previously-hardcoded `size:'L'`), closing the
+"only one live size" risk flagged at the end of that slice. What remains:
 `docs/performance-testing.md`, CI phase 2, and CI-markdown mixed-unit
 rendering.
 

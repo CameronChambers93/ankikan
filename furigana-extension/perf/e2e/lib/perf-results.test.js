@@ -23,6 +23,12 @@
  * perf/e2e/lib/perf-results.js, so the import below fails at
  * module-resolution time until the developer implements it. That is the
  * correct starting state for this slice.
+ *
+ * Slice 12 (AC-32) parametrizes `assembleWideScanResult`'s hardcoded
+ * `size: 'L'` into an optional `opts.size`, so the wide-scan harness can also
+ * run at other sizes ('S'/'M') without a new wrapper. T-44-153 checks both
+ * the new explicit-size path and the zero-regression default path that
+ * T-44-143 already locks in.
  */
 import { describe, it, expect } from 'vitest';
 
@@ -192,5 +198,26 @@ describe('assembleWideScanResult — composition of buildPhaseRecords for the wi
     // segmentAndWrap never runs client-side and never emits t_segment.
     const scenarios = result.records.map((r) => r.scenario);
     expect(scenarios).not.toContain('t_segment');
+  });
+});
+
+describe('assembleWideScanResult — optional size parameter (AC-32, Slice 12)', () => {
+  it('T-44-153 explicit size option in opts overrides the "wide" default, while the pre-existing no-size-argument call keeps defaulting to size:"L"', () => {
+    const measures = makeWideScanMeasures();
+
+    // New behaviour: an explicit size in opts must flow through to
+    // buildPhaseRecords instead of the historically hardcoded 'L'.
+    const explicitSizeResult = assembleWideScanResult(measures, { size: 'S', now: fixedNow });
+    expect(explicitSizeResult.records).toEqual(
+      buildPhaseRecords(measures, { suite: 'wide-scan', size: 'S', variant: 'wide' })
+    );
+    expect(explicitSizeResult.meta.tier).toBe('e2e');
+
+    // Zero-regression guard: the exact no-size-argument call form that
+    // T-44-143/wide-scan.perf.js already rely on must be unchanged.
+    const defaultResult = assembleWideScanResult(measures);
+    expect(defaultResult.records).toEqual(
+      buildPhaseRecords(measures, { suite: 'wide-scan', size: 'L', variant: 'wide' })
+    );
   });
 });
