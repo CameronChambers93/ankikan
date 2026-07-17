@@ -247,6 +247,7 @@ export async function loadStyleSettings(doc, storageGet, isPreserved = () => fal
 function coerceValue(entry, el) {
   if (entry.type === 'color' || entry.type === 'enum') return el.value;
   if (entry.type === 'bool') return el.checked;
+  if (el.value === '') return undefined;
   return Number(el.value);
 }
 

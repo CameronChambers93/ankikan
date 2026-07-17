@@ -44,6 +44,13 @@ export const STYLE_SCHEMA = [
   { key: 'fontWeight',           id: 'font-weight',      type: 'bool',    group: 'text' },
   { key: 'textDecorationStyle',  id: 'underline-style',  type: 'enum',    group: 'text', options: ['none', 'solid', 'dotted', 'dashed', 'wavy'] },
   { key: 'textDecorationColor',  id: 'underline-color',  type: 'color',   group: 'text' },
+  { key: 'glowColor',            id: 'glow-color',       type: 'color',   group: 'effects' },
+  { key: 'glowOpacity',          id: 'glow-opacity',     type: 'opacity', group: 'effects', pairsWith: 'glowColor' },
+  { key: 'glowBlur',             id: 'glow-blur',        type: 'px',      group: 'effects', min: 0, max: 30 },
+  { key: 'glowSpread',           id: 'glow-spread',      type: 'px',      group: 'effects', min: 0, max: 20 },
+  { key: 'paddingX',             id: 'padding-x',        type: 'px',      group: 'spacing', min: 0, max: 12 },
+  { key: 'paddingY',             id: 'padding-y',        type: 'px',      group: 'spacing', min: 0, max: 12 },
+  { key: 'letterSpacing',        id: 'letter-spacing',   type: 'px',      group: 'spacing', min: 0, max: 8 },
 ];
 
 /** Anki status categories, in the exact order buildStyleSheet renders their CSS rules. */
@@ -136,10 +143,32 @@ const CSS_GROUP_RENDERERS = {
     }
     return parts.join(' ');
   },
+  effects: (s) => {
+    if (!s.glowColor) return '';
+    const blur = s.glowBlur || 0;
+    const spread = s.glowSpread || 0;
+    if (blur <= 0 && spread <= 0) return '';
+    const rgb = hexToRgb(s.glowColor);
+    if (!rgb) return '';
+    const alpha = s.glowOpacity !== undefined ? s.glowOpacity : 1;
+    return `box-shadow: 0 0 ${blur}px ${spread}px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha});`;
+  },
+  spacing: (s) => {
+    const parts = [];
+    const paddingX = s.paddingX || 0;
+    const paddingY = s.paddingY || 0;
+    if (paddingX > 0 || paddingY > 0) {
+      parts.push(`padding: ${paddingY}px ${paddingX}px;`);
+      parts.push('box-decoration-break: clone;');
+      parts.push('-webkit-box-decoration-break: clone;');
+    }
+    if (s.letterSpacing > 0) parts.push(`letter-spacing: ${s.letterSpacing}px;`);
+    return parts.join(' ');
+  },
 };
 
 /** Declaration order within a `.anki-<cat> { … }` rule, matching the pre-refactor output. */
-const CSS_GROUP_ORDER = ['fill', 'shape', 'border', 'text'];
+const CSS_GROUP_ORDER = ['fill', 'shape', 'border', 'text', 'effects', 'spacing'];
 
 /**
  * Parses a 3- or 6-digit CSS hex color string into `{r, g, b}` integer components.
