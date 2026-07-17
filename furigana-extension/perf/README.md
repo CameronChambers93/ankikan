@@ -49,9 +49,10 @@ fixture, at full Tier-2 scale (8,445 spans / 2,854 distinct lookup words for
 SIZES.L), against the live, self-seeded `AnkiKan-Perf` deck. **A second live size
 (SIZES.S) for `wide-scan` has since landed** (`assembleWideScanResult(measures,
 {size})` now parametrizes the previously-hardcoded `size:'L'`), closing the
-"only one live size" risk flagged at the end of that slice. What remains:
-`docs/performance-testing.md`, CI phase 2, and CI-markdown mixed-unit
-rendering.
+"only one live size" risk flagged at the end of that slice. `formatMarkdownSummary`'s
+heading is now tier-aware (`## Tier-1/Tier-2/Tier-3 Performance Summary` via the
+exported `tierLabel` helper) instead of being hardcoded to Tier-1. What remains:
+`docs/performance-testing.md` and CI phase 2.
 
 ## Layout
 
@@ -135,6 +136,9 @@ posted to the job summary via `compare.mjs --markdown-out "$GITHUB_STEP_SUMMARY"
 `compare.mjs` flags added for this: `--seed-on-missing` (write the baseline
 from the current run instead of erroring when it's missing) and
 `--markdown-out <path>` (append a GFM table + summary line to the given file).
+`formatMarkdownSummary`'s heading is tier-aware via `tierLabel`, but CI itself
+still only produces Tier-1/micro data pending CI phase 2 (Anki-in-CI), so the
+nightly job summary always reads "## Tier-1 Performance Summary" for now.
 
 ## Notes
 

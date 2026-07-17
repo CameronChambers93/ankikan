@@ -31,6 +31,7 @@ import {
   formatDeltaByUnit,
   keyOf,
   main,
+  tierLabel,
 } from './compare.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1082,5 +1083,173 @@ describe('main — end-to-end mixed-unit --markdown-out content', () => {
     expect(appendedData).toContain('10.00MB');
     expect(appendedData).not.toMatch(/NaN/);
     expect(appendedData).not.toMatch(/undefined/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 13 — tier-aware markdown heading (issue #44 AC 123-129).
+//
+// formatMarkdownSummary() has always hardcoded its heading as the literal
+// '## Tier-1 Performance Summary', regardless of which tier (micro/e2e/stress)
+// actually produced the result being rendered — so a Tier-2 or Tier-3 run's
+// summary posted to $GITHUB_STEP_SUMMARY misleadingly reads "Tier-1". This
+// slice adds an exported tierLabel(tier) helper (micro->Tier-1, e2e->Tier-2,
+// stress->Tier-3, fallback 'Unknown' for a null/undefined tier, or the raw
+// string itself for any other unrecognized tier) and wires the heading
+// through it via `## ${tierLabel(result.tier)} Performance Summary`.
+// tierLabel is not yet exported and the heading is still hardcoded, so every
+// test below fails red: importing tierLabel yields undefined (throws when
+// called), and the e2e/stress/unknown heading assertions mismatch the
+// hardcoded 'Tier-1' string.
+// ---------------------------------------------------------------------------
+
+describe('formatMarkdownSummary — tier-1 heading backward-compat lock', () => {
+  it('T-44-154 a tier:"micro" result renders the heading exactly "## Tier-1 Performance Summary"', () => {
+    const baseline = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })]);
+    const current = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })]);
+    const result = compareRuns(baseline, current);
+
+    const md = formatMarkdownSummary(result);
+    const heading = md.split('\n')[0];
+
+    expect(result.tier).toBe('micro');
+    expect(heading).toBe('## Tier-1 Performance Summary');
+  });
+});
+
+describe('formatMarkdownSummary — tier-2 heading', () => {
+  it('T-44-155 a tier:"e2e" result renders the heading exactly "## Tier-2 Performance Summary", never the Tier-1 heading', () => {
+    const baseline = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })], { tier: 'e2e' });
+    const current = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })], { tier: 'e2e' });
+    const result = compareRuns(baseline, current);
+
+    const md = formatMarkdownSummary(result);
+    const heading = md.split('\n')[0];
+
+    expect(result.tier).toBe('e2e');
+    expect(heading).toBe('## Tier-2 Performance Summary');
+    expect(md).not.toContain('## Tier-1 Performance Summary');
+  });
+});
+
+describe('formatMarkdownSummary — tier-3 heading', () => {
+  it('T-44-156 a tier:"stress" result renders the heading exactly "## Tier-3 Performance Summary"', () => {
+    const baseline = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })], { tier: 'stress' });
+    const current = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })], { tier: 'stress' });
+    const result = compareRuns(baseline, current);
+
+    const md = formatMarkdownSummary(result);
+    const heading = md.split('\n')[0];
+
+    expect(result.tier).toBe('stress');
+    expect(heading).toBe('## Tier-3 Performance Summary');
+  });
+});
+
+describe('formatMarkdownSummary — missing/unrecognized tier falls back gracefully', () => {
+  it('T-44-157 a genuinely undefined tier renders "## Unknown Performance Summary", and an unrecognized tier string like "browser" renders "## browser Performance Summary" — neither throws', () => {
+    // meta.tier: undefined — makeRun's object-literal spread still sets the
+    // `tier` *key* (with value undefined), overriding the 'micro' default, so
+    // compareRuns()'s `current.meta.tier` really is undefined here, not
+    // silently inheriting 'micro' via the spread.
+    const undefinedBaseline = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })], { tier: undefined });
+    const undefinedCurrent = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })], { tier: undefined });
+    const undefinedResult = compareRuns(undefinedBaseline, undefinedCurrent);
+
+    expect(undefinedResult.tier).toBeUndefined();
+    expect(() => formatMarkdownSummary(undefinedResult)).not.toThrow();
+    const undefinedMd = formatMarkdownSummary(undefinedResult);
+    expect(undefinedMd.split('\n')[0]).toBe('## Unknown Performance Summary');
+
+    // An unrecognized-but-defined tier string is not silently swallowed into
+    // 'Unknown' — it renders verbatim, so a future/unanticipated tier name
+    // stays legible even before tierLabel() is taught its short label.
+    const unknownBaseline = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })], { tier: 'browser' });
+    const unknownCurrent = makeRun([mkRecord({ p50: 100, p95: 150, max: 200 })], { tier: 'browser' });
+    const unknownResult = compareRuns(unknownBaseline, unknownCurrent);
+
+    expect(unknownResult.tier).toBe('browser');
+    expect(() => formatMarkdownSummary(unknownResult)).not.toThrow();
+    const unknownMd = formatMarkdownSummary(unknownResult);
+    expect(unknownMd.split('\n')[0]).toBe('## browser Performance Summary');
+  });
+});
+
+describe('formatMarkdownSummary — mixed-unit tier-3 result composes unit rendering and tier labeling', () => {
+  it('T-44-158 the mixed ms/bytes/count stress fixture renders exactly one row per finding, each in its own unit, under a "## Tier-3 Performance Summary" heading', () => {
+    const result = makeMixedUnitResult();
+    const md = formatMarkdownSummary(result);
+    const lines = md.split('\n');
+
+    expect(result.tier).toBe('stress');
+    expect(lines[0]).toBe('## Tier-3 Performance Summary');
+
+    const msRow = lines.find((l) => l.includes('t_total'));
+    const bytesRow = lines.find((l) => l.includes('heap-growth'));
+    const countRow = lines.find((l) => l.includes('span-count'));
+
+    expect(msRow).toMatch(/42\.00ms/);
+    expect(msRow).not.toContain('MB');
+
+    expect(bytesRow).toContain('10.00MB');
+    expect(bytesRow).not.toMatch(/\dms\b/);
+
+    expect(countRow).toContain('| 10 |');
+    expect(countRow).not.toContain('MB');
+    expect(countRow).not.toMatch(/\dms\b/);
+
+    // Exactly one data row per finding — no duplication or dropped rows from
+    // the tier-labeling change (header row + separator row are excluded).
+    const dataRows = lines.filter(
+      (l) => l.startsWith('| ') && !l.startsWith('| Status') && !l.startsWith('| ---')
+    );
+    expect(dataRows).toHaveLength(3);
+  });
+});
+
+describe('formatSummary — unaffected by the tier-heading fix (scoped to formatMarkdownSummary only)', () => {
+  it('T-44-159 the mixed-unit stress fixture still prints a raw "Tier: stress (...)" line via formatSummary, with correct per-unit finding lines', () => {
+    const result = makeMixedUnitResult();
+    const text = formatSummary(result);
+    const lines = text.split('\n');
+
+    expect(lines[0]).toMatch(/^Tier: stress \(/);
+    expect(lines[0]).not.toContain('Tier-3');
+    expect(lines[0]).not.toContain('##');
+
+    const msLine = lines.find((l) => l.includes('t_total'));
+    const bytesLine = lines.find((l) => l.includes('heap-growth'));
+    const countLine = lines.find((l) => l.includes('span-count'));
+
+    expect(msLine).toMatch(/42\.00ms/);
+    expect(bytesLine).toContain('10.00MB');
+    expect(bytesLine).not.toMatch(/\dms\b/);
+    expect(countLine).not.toContain('MB');
+    expect(countLine).not.toMatch(/\dms\b/);
+  });
+});
+
+describe('perf/README.md — "what remains" no longer lists CI-markdown mixed-unit rendering as outstanding', () => {
+  it('T-44-160 the README\'s "What remains" text, once whitespace-normalized, no longer contains the phrase "CI-markdown mixed-unit rendering"', () => {
+    const readmePath = path.join(__dirname, 'README.md');
+    const readme = fs.readFileSync(readmePath, 'utf-8');
+    // Markdown hard-wraps long paragraphs mid-phrase for diff-friendliness, so
+    // normalize all whitespace runs (including the line-wrap newline) to a
+    // single space before searching — otherwise a literal search would miss
+    // the phrase purely because of where the source happens to wrap, giving a
+    // false green regardless of what the sentence actually says.
+    const normalized = readme.replace(/\s+/g, ' ');
+
+    expect(normalized).not.toContain('CI-markdown mixed-unit rendering');
+  });
+});
+
+describe('tierLabel — direct unit test', () => {
+  it('T-44-161 tierLabel maps micro/e2e/stress to Tier-1/2/3 exactly, and a null/undefined tier to "Unknown"', () => {
+    expect(tierLabel('micro')).toBe('Tier-1');
+    expect(tierLabel('e2e')).toBe('Tier-2');
+    expect(tierLabel('stress')).toBe('Tier-3');
+    expect(tierLabel(undefined)).toBe('Unknown');
+    expect(tierLabel(null)).toBe('Unknown');
   });
 });

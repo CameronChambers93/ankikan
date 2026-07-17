@@ -255,6 +255,21 @@ function fmtPct(pct) {
   return `${sign}${(pct * 100).toFixed(1)}%`;
 }
 
+const TIER_LABELS = { micro: 'Tier-1', e2e: 'Tier-2', stress: 'Tier-3' };
+
+/**
+ * Maps compareRuns()'s internal tier key to the human-facing heading label.
+ * Falls back to the raw tier string for any value outside the three known
+ * tiers, or 'Unknown' when tier is null/undefined — so a future tier never
+ * throws and is never mislabeled as Tier-1.
+ * @param {string|null|undefined} tier
+ * @returns {string}
+ */
+export function tierLabel(tier) {
+  if (tier == null) return 'Unknown';
+  return TIER_LABELS[tier] ?? tier;
+}
+
 /**
  * Renders a compareRuns() result as a GitHub-flavored markdown table, suitable
  * for appending to $GITHUB_STEP_SUMMARY. Pure — takes no fs/process dependency.
@@ -264,7 +279,7 @@ function fmtPct(pct) {
  * @returns {string}
  */
 export function formatMarkdownSummary(result, opts = {}) {
-  const lines = ['## Tier-1 Performance Summary', ''];
+  const lines = [`## ${tierLabel(result.tier)} Performance Summary`, ''];
   if (opts.seeded) {
     lines.push('> Baseline seeded from this run (no prior baseline found).', '');
   }
