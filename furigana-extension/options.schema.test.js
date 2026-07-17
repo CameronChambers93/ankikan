@@ -46,6 +46,14 @@ const DISTINCT_VALUES = {
   fontWeight: true,
   textDecorationStyle: 'dotted',
   textDecorationColor: '#fedcba',
+  // Issue #49 additions.
+  glowColor: '#112233',
+  glowOpacity: 0.6,
+  glowBlur: 8,
+  glowSpread: 6,
+  paddingX: 4,
+  paddingY: 2,
+  letterSpacing: 2,
 };
 
 describe('schema-driven #style-controls generation (issue #45 AC-2)', () => {
